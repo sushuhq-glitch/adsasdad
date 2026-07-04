@@ -92,8 +92,11 @@ def recommend(req: RecommendRequest) -> Recommendation | None:
     scored: list[tuple[MarketEvaluation, MatchAnalysis]] = []
     for fx in fixtures[:40]:  # limite prudenziale per richiesta
         analysis = analyze_fixture(fx.id)
+        label = f"{fx.home_team.name} - {fx.away_team.name}"
         for ev in analysis.evaluations:
             if lo <= ev.best_odds <= hi and ev.confidence >= req.min_confidence:
+                if not ev.fixture_label:
+                    ev.fixture_label = label
                 scored.append((ev, analysis))
 
     if not scored:
@@ -102,15 +105,16 @@ def recommend(req: RecommendRequest) -> Recommendation | None:
     scored.sort(key=lambda t: (t[0].probability, t[0].value_pct, t[0].confidence), reverse=True)
     best_ev, best_analysis = scored[0]
 
-    # alternative: migliori selezioni successive, su mercati o partite diverse
+    # alternative: migliori selezioni successive, al massimo una per
+    # combinazione (partita, gruppo di mercato) per dare varietà reale
     alternatives: list[MarketEvaluation] = []
-    seen = {(best_analysis.fixture.id, best_ev.market_id)}
+    seen = {(best_analysis.fixture.id, best_ev.market_group)}
     for ev, an in scored[1:]:
         key = (an.fixture.id, ev.market_group)
-        if (an.fixture.id, ev.market_id) in seen:
+        if key in seen:
             continue
         alternatives.append(ev)
-        seen.add((an.fixture.id, ev.market_id))
+        seen.add(key)
         if len(alternatives) >= 5:
             break
 

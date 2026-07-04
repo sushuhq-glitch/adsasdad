@@ -60,6 +60,31 @@ def _market_probability(market_id: str, sim: SimulationSummary,
     return None
 
 
+def _devig_book(market_id: str) -> tuple[str, float] | None:
+    """Chiave del "libro" di selezioni complementari (somma equa = fair_total)
+    su cui normalizzare il margine del bookmaker. None = de-vig non applicabile."""
+    parts = market_id.split(":")
+    kind = parts[0]
+    if kind == "1X2":
+        return ("1X2", 1.0)
+    if kind == "DC":
+        return ("DC", 2.0)  # le tre doppie chance sommano a 2 in termini equi
+    if kind == "DNB":
+        return ("DNB", 1.0)
+    if kind == "BTTS":
+        return ("BTTS", 1.0)
+    if kind == "OU":
+        return (f"OU:{parts[1]}", 1.0)
+    if kind == "AH":
+        # HOME:-1.5 complementa AWAY:+1.5 -> chiave normalizzata sull'handicap casa
+        hc = float(parts[2])
+        home_hc = hc if parts[1] == "HOME" else -hc
+        return (f"AH:{home_hc:+g}", 1.0)
+    if kind in {"CORN", "CARD"}:
+        return (f"{kind}:{parts[1]}", 1.0)
+    return None  # es. Team Totals: quotato solo l'Over, nessun libro completo
+
+
 def _evaluate_markets(
     board: OddsBoard,
     sim: SimulationSummary,
@@ -71,24 +96,27 @@ def _evaluate_markets(
 ) -> list[MarketEvaluation]:
     evals: list[MarketEvaluation] = []
 
-    # de-vig per gruppo: somma delle probabilità implicite del gruppo
-    group_overround: dict[str, float] = {}
+    # somma delle probabilità implicite per libro complementare
+    sums: dict[str, float] = {}
+    counts: dict[str, int] = {}
     for mk in board.markets:
-        group_overround.setdefault(mk.market_group, 0.0)
-    sums: dict[str, float] = {g: 0.0 for g in group_overround}
-    counts: dict[str, int] = {g: 0 for g in group_overround}
-    for mk in board.markets:
-        sums[mk.market_group] += 1.0 / mk.avg_odds
-        counts[mk.market_group] += 1
+        book = _devig_book(mk.market_id)
+        if book:
+            sums[book[0]] = sums.get(book[0], 0.0) + 1.0 / mk.avg_odds
+            counts[book[0]] = counts.get(book[0], 0) + 1
 
     for mk in board.markets:
         p = _market_probability(mk.market_id, sim, p_home, p_draw, p_away)
         if p is None or not (0.005 < p < 0.999):
             continue
         implied = 1.0 / mk.avg_odds
-        # normalizza il margine del bookmaker sul gruppo (approssimazione proporzionale)
-        overround = sums[mk.market_group]
-        devig = implied / overround if overround > 1.0 and counts[mk.market_group] >= 2 else implied
+        # de-vig proporzionale sul libro di selezioni complementari
+        book = _devig_book(mk.market_id)
+        devig = implied
+        if book and counts.get(book[0], 0) >= 2:
+            overround = sums[book[0]] / book[1]
+            if overround > 0:
+                devig = implied / overround
         value = p * mk.best_odds - 1.0
         # confidenza: accordo tra modelli * qualità dati * distanza dagli estremi
         extremity = 1.0 - abs(p - 0.5) * 0.35

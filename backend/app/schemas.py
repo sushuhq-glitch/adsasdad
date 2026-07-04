@@ -279,6 +279,7 @@ class MarketEvaluation(BaseModel):
     market_id: str
     market_group: str
     selection: str
+    fixture_label: str = ""
     probability: float  # model estimated probability
     fair_odds: float
     best_odds: float
