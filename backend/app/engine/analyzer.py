@@ -6,6 +6,7 @@ mercato disponibile (probabilità stimata, quota equa, value, confidenza).
 """
 from __future__ import annotations
 
+import hashlib
 import threading
 from datetime import datetime, timezone
 
@@ -47,6 +48,24 @@ def _market_probability(market_id: str, sim: SimulationSummary,
         if over is None:
             return None
         return over if parts[2] == "OVER" else 1.0 - over
+    if kind == "HT":
+        over = sim.first_half_over.get(parts[2])
+        if over is None:
+            return None
+        return over if parts[3] == "OVER" else 1.0 - over
+    if kind == "ODDEVEN":
+        return sim.goals_odd if parts[1] == "ODD" else 1.0 - sim.goals_odd
+    if kind == "MG":
+        return sim.multigol.get(parts[1])
+    if kind == "COMBO":
+        key = f"{parts[1]}&{parts[2]}"
+        return sim.combos.get(key)
+    if kind == "CS":
+        return sim.clean_sheet_home if parts[1] == "HOME" else sim.clean_sheet_away
+    if kind == "WTN":
+        return sim.win_to_nil_home if parts[1] == "HOME" else sim.win_to_nil_away
+    if kind == "EXACT":
+        return sim.exact_scores.get(parts[1])
     if kind == "AH":
         side, hc = parts[1], float(parts[2])
         return sim.handicap.get(f"{side}{hc:+g}")
@@ -54,9 +73,15 @@ def _market_probability(market_id: str, sim: SimulationSummary,
         side, line = parts[1].lower(), parts[2]
         return sim.team_totals.get(f"{side}_over_{line}")
     if kind == "CORN":
-        return sim.corners_over_9_5 if parts[2] == "OVER" else 1.0 - sim.corners_over_9_5
+        over = sim.corners_over.get(parts[1])
+        if over is None:
+            return None
+        return over if parts[2] == "OVER" else 1.0 - over
     if kind == "CARD":
-        return sim.cards_over_4_5 if parts[2] == "OVER" else 1.0 - sim.cards_over_4_5
+        over = sim.cards_over.get(parts[1])
+        if over is None:
+            return None
+        return over if parts[2] == "OVER" else 1.0 - over
     return None
 
 
@@ -75,6 +100,10 @@ def _devig_book(market_id: str) -> tuple[str, float] | None:
         return ("BTTS", 1.0)
     if kind == "OU":
         return (f"OU:{parts[1]}", 1.0)
+    if kind == "HT":
+        return (f"HT:{parts[2]}", 1.0)
+    if kind == "ODDEVEN":
+        return ("ODDEVEN", 1.0)
     if kind == "AH":
         # HOME:-1.5 complementa AWAY:+1.5 -> chiave normalizzata sull'handicap casa
         hc = float(parts[2])
@@ -121,6 +150,12 @@ def _evaluate_markets(
         # confidenza: accordo tra modelli * qualità dati * distanza dagli estremi
         extremity = 1.0 - abs(p - 0.5) * 0.35
         confidence = max(0.0, min(1.0, agreement * data_quality * extremity))
+        # mercati secondari: meno liquidi e con dati meno ricchi -> confidenza ridotta
+        kind = mk.market_id.split(":")[0]
+        if kind in {"CORN", "CARD"}:
+            confidence *= 0.85
+        elif kind == "EXACT":
+            confidence *= 0.75
         b = mk.best_odds - 1.0
         kelly = max(0.0, (p * b - (1 - p)) / b) if b > 0 else 0.0
         evals.append(
@@ -177,14 +212,27 @@ def analyze_fixture(fixture_id: str, use_cache: bool = True) -> MatchAnalysis:
     )
     p_home, p_draw, p_away, agreement = ensemble.blend(breakdown)
 
+    # corner e cartellini attesi dai dati di forma delle due squadre
+    # (media tra corner prodotti e concessi negli ultimi 10 incontri)
+    corners_mu = (
+        (home_form.last10.corners_for + away_form.last10.corners_against) / 2
+        + (away_form.last10.corners_for + home_form.last10.corners_against) / 2
+    )
+    cards_mu = (
+        home_form.last10.yellow_cards + away_form.last10.yellow_cards
+        + home_form.last10.red_cards + away_form.last10.red_cards
+    )
+
     sim = simulate_match(
         adj.lambda_home, adj.lambda_away,
+        corners_mu=corners_mu,
+        cards_mu=cards_mu,
         cards_multiplier=adj.cards_multiplier,
         corners_multiplier=adj.corners_multiplier,
         referee=external.referee,
         home_scorers=home_squad.key_players,
         away_scorers=away_squad.key_players,
-        seed=abs(hash(fixture_id)) % (2**31),
+        seed=int(hashlib.sha256(fixture_id.encode()).hexdigest()[:8], 16),
     )
     # media finale 1X2: 60% ensemble ML, 40% Monte Carlo empirico
     p_home = 0.6 * p_home + 0.4 * sim.p_home

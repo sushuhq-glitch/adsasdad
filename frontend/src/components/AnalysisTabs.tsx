@@ -368,6 +368,43 @@ export default function AnalysisTabs({ analysis }: { analysis: MatchAnalysis }) 
                 </ResponsiveContainer>
               </div>
             </div>
+            <div className="duo-grid" style={{ marginTop: 14 }}>
+              <div>
+                <p className="sub-title">Corner e cartellini (linee simulate)</p>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Linea</th><th className="num">Over</th><th className="num">Under</th></tr></thead>
+                    <tbody>
+                      {Object.entries(sim.corners_over).map(([line, p]) => (
+                        <tr key={`c${line}`}><td>Corner {line}</td><td className="num">{pct(p)}</td><td className="num">{pct(1 - p)}</td></tr>
+                      ))}
+                      {Object.entries(sim.cards_over).map(([line, p]) => (
+                        <tr key={`k${line}`}><td>Cartellini {line}</td><td className="num">{pct(p)}</td><td className="num">{pct(1 - p)}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div>
+                <p className="sub-title">Mercati speciali</p>
+                <div className="table-wrap">
+                  <table>
+                    <tbody>
+                      {Object.entries(sim.multigol).map(([range, p]) => (
+                        <tr key={range}><td>Multigol {range}</td><td className="num">{pct(p)}</td></tr>
+                      ))}
+                      <tr><td>Primo tempo Over 0.5</td><td className="num">{pct(sim.first_half_over['0.5'] ?? 0)}</td></tr>
+                      <tr><td>Primo tempo Over 1.5</td><td className="num">{pct(sim.first_half_over['1.5'] ?? 0)}</td></tr>
+                      <tr><td>Totale gol dispari</td><td className="num">{pct(sim.goals_odd)}</td></tr>
+                      <tr><td>{fx.home_team.name} porta inviolata</td><td className="num">{pct(sim.clean_sheet_home)}</td></tr>
+                      <tr><td>{fx.away_team.name} porta inviolata</td><td className="num">{pct(sim.clean_sheet_away)}</td></tr>
+                      <tr><td>{fx.home_team.name} vince senza subire</td><td className="num">{pct(sim.win_to_nil_home)}</td></tr>
+                      <tr><td>{fx.away_team.name} vince senza subire</td><td className="num">{pct(sim.win_to_nil_away)}</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
             {Object.keys(sim.top_scorers).length > 0 && (
               <>
                 <p className="sub-title" style={{ marginTop: 14 }}>Probabili marcatori (anytime)</p>

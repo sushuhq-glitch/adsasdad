@@ -610,49 +610,93 @@ class DemoProvider(DataProvider):
         m = pr.score_matrix(lam_h * rng.uniform(0.93, 1.07), lam_a * rng.uniform(0.93, 1.07))
         p_home, p_draw, p_away = pr.outcome_probs(m)
 
+        home, away = fixture.home_team.name, fixture.away_team.name
+
         def selections() -> list[tuple[str, str, str, float]]:
             sel: list[tuple[str, str, str, float]] = [
-                ("1X2:HOME", "Match Result (1X2)", f"{fixture.home_team.name} win", p_home),
-                ("1X2:DRAW", "Match Result (1X2)", "Draw", p_draw),
-                ("1X2:AWAY", "Match Result (1X2)", f"{fixture.away_team.name} win", p_away),
-                ("DC:1X", "Double Chance", f"{fixture.home_team.name} or Draw", p_home + p_draw),
-                ("DC:X2", "Double Chance", f"Draw or {fixture.away_team.name}", p_draw + p_away),
-                ("DC:12", "Double Chance", f"{fixture.home_team.name} or {fixture.away_team.name}", p_home + p_away),
-                ("DNB:HOME", "Draw No Bet", f"{fixture.home_team.name} (DNB)", pr.draw_no_bet_prob(m, True)),
-                ("DNB:AWAY", "Draw No Bet", f"{fixture.away_team.name} (DNB)", pr.draw_no_bet_prob(m, False)),
-                ("BTTS:YES", "Both Teams To Score", "BTTS — Yes", pr.btts_prob(m)),
-                ("BTTS:NO", "Both Teams To Score", "BTTS — No", 1 - pr.btts_prob(m)),
+                ("1X2:HOME", "Esito finale (1X2)", f"1 — {home}", p_home),
+                ("1X2:DRAW", "Esito finale (1X2)", "X — Pareggio", p_draw),
+                ("1X2:AWAY", "Esito finale (1X2)", f"2 — {away}", p_away),
+                ("DC:1X", "Doppia chance", f"1X — {home} o pareggio", p_home + p_draw),
+                ("DC:X2", "Doppia chance", f"X2 — pareggio o {away}", p_draw + p_away),
+                ("DC:12", "Doppia chance", f"12 — {home} o {away}", p_home + p_away),
+                ("DNB:HOME", "Rimborso se pareggio", f"{home} (Draw No Bet)", pr.draw_no_bet_prob(m, True)),
+                ("DNB:AWAY", "Rimborso se pareggio", f"{away} (Draw No Bet)", pr.draw_no_bet_prob(m, False)),
+                ("BTTS:YES", "Gol/No Gol", "Gol — segnano entrambe", pr.btts_prob(m)),
+                ("BTTS:NO", "Gol/No Gol", "No Gol — almeno una non segna", 1 - pr.btts_prob(m)),
+                ("ODDEVEN:ODD", "Pari/Dispari", "Totale gol dispari", pr.goals_odd_prob(m)),
+                ("ODDEVEN:EVEN", "Pari/Dispari", "Totale gol pari", 1 - pr.goals_odd_prob(m)),
+                ("CS:HOME:YES", "Porta inviolata", f"{home} senza subire gol", pr.clean_sheet_prob(m, True)),
+                ("CS:AWAY:YES", "Porta inviolata", f"{away} senza subire gol", pr.clean_sheet_prob(m, False)),
+                ("WTN:HOME", "Vincente senza subire gol", f"{home} vince a porta inviolata", pr.win_to_nil_prob(m, True)),
+                ("WTN:AWAY", "Vincente senza subire gol", f"{away} vince a porta inviolata", pr.win_to_nil_prob(m, False)),
             ]
             for line in (0.5, 1.5, 2.5, 3.5, 4.5):
                 po = pr.over_prob(m, line)
-                sel.append((f"OU:{line}:OVER", "Total Goals", f"Over {line} goals", po))
-                sel.append((f"OU:{line}:UNDER", "Total Goals", f"Under {line} goals", 1 - po))
+                sel.append((f"OU:{line}:OVER", "Gol totali", f"Over {line} gol", po))
+                sel.append((f"OU:{line}:UNDER", "Gol totali", f"Under {line} gol", 1 - po))
+            for line in (0.5, 1.5):
+                p1h = pr.first_half_over_prob(lam_h, lam_a, line)
+                sel.append((f"HT:OU:{line}:OVER", "Primo tempo", f"Primo tempo Over {line}", p1h))
+                sel.append((f"HT:OU:{line}:UNDER", "Primo tempo", f"Primo tempo Under {line}", 1 - p1h))
+            for lo, hi in ((1, 2), (1, 3), (2, 3), (2, 4), (3, 5)):
+                sel.append((f"MG:{lo}-{hi}", "Multigol", f"Multigol {lo}-{hi}",
+                            pr.multigol_prob(m, lo, hi)))
+            for side, name in (("HOME", home), ("AWAY", away)):
+                sel.append((f"COMBO:{side}:O1.5", "Esito + gol",
+                            f"{name} vince e Over 1.5", pr.combo_prob(m, side, 1.5, True)))
+                sel.append((f"COMBO:{side}:O2.5", "Esito + gol",
+                            f"{name} vince e Over 2.5", pr.combo_prob(m, side, 2.5, True)))
+                sel.append((f"COMBO:{side}:U3.5", "Esito + gol",
+                            f"{name} vince e Under 3.5", pr.combo_prob(m, side, 3.5, False)))
+            sel.append(("COMBO:DRAW:U2.5", "Esito + gol", "Pareggio e Under 2.5",
+                        pr.combo_prob(m, "DRAW", 2.5, False)))
             for hc in (-1.5, 1.5):
-                sel.append((f"AH:HOME:{hc}", "Asian Handicap",
-                            f"{fixture.home_team.name} {'+' if hc > 0 else ''}{hc}",
+                sel.append((f"AH:HOME:{hc}", "Handicap asiatico",
+                            f"{home} {'+' if hc > 0 else ''}{hc}",
                             pr.handicap_cover_prob(m, hc, True)))
-                sel.append((f"AH:AWAY:{hc}", "Asian Handicap",
-                            f"{fixture.away_team.name} {'+' if hc > 0 else ''}{hc}",
+                sel.append((f"AH:AWAY:{hc}", "Handicap asiatico",
+                            f"{away} {'+' if hc > 0 else ''}{hc}",
                             pr.handicap_cover_prob(m, hc, False)))
             for line in (0.5, 1.5):
-                sel.append((f"TT:HOME:{line}:OVER", "Team Totals",
-                            f"{fixture.home_team.name} over {line} goals",
+                sel.append((f"TT:HOME:{line}:OVER", "Gol squadra",
+                            f"{home} segna più di {line} gol",
                             pr.team_over_prob(m, line, True)))
-                sel.append((f"TT:AWAY:{line}:OVER", "Team Totals",
-                            f"{fixture.away_team.name} over {line} goals",
+                sel.append((f"TT:AWAY:{line}:OVER", "Gol squadra",
+                            f"{away} segna più di {line} gol",
                             pr.team_over_prob(m, line, False)))
-            # corners & cards priced from simple normal assumptions
-            corners_mu = 9.6 + (lam_h + lam_a - 2.7) * 1.1
-            cards_mu = 4.1
+            for score, p_sc in pr.exact_score_probs(m, top=6).items():
+                sel.append((f"EXACT:{score}", "Risultato esatto", f"Risultato esatto {score}", p_sc))
+
+            # corner e cartellini: il book prezza sugli stessi fondamentali di
+            # forma usati dal modello, con un piccolo scarto di valutazione —
+            # le discrepanze restano realistiche (pochi punti percentuali)
+            hf = self.team_form(fixture, True).last10
+            af = self.team_form(fixture, False).last10
+            corners_mu_true = (
+                (hf.corners_for + af.corners_against) / 2
+                + (af.corners_for + hf.corners_against) / 2
+            )
+            tempo = 0.85 + 0.15 * (lam_h + lam_a) / 2.7
+            corners_mu_book = corners_mu_true * tempo * rng.uniform(0.95, 1.06)
+            ref_mult = self.external_factors(fixture).referee.avg_yellow_cards / 4.1
+            cards_mu_true = (
+                hf.yellow_cards + af.yellow_cards + hf.red_cards + af.red_cards
+            )
+            cards_mu_book = cards_mu_true * ref_mult * rng.uniform(0.94, 1.08)
             from math import erf, sqrt
 
             def norm_over(mu: float, sd: float, line: float) -> float:
                 return 0.5 * (1 - erf((line - mu) / (sd * sqrt(2))))
 
-            sel.append(("CORN:9.5:OVER", "Corners", "Over 9.5 corners", norm_over(corners_mu, 3.1, 9.5)))
-            sel.append(("CORN:9.5:UNDER", "Corners", "Under 9.5 corners", 1 - norm_over(corners_mu, 3.1, 9.5)))
-            sel.append(("CARD:4.5:OVER", "Cards", "Over 4.5 cards", norm_over(cards_mu, 2.0, 4.5)))
-            sel.append(("CARD:4.5:UNDER", "Cards", "Under 4.5 cards", 1 - norm_over(cards_mu, 2.0, 4.5)))
+            for line in (8.5, 9.5, 10.5):
+                po = norm_over(corners_mu_book, 3.1, line)
+                sel.append((f"CORN:{line}:OVER", "Calci d'angolo", f"Over {line} corner", po))
+                sel.append((f"CORN:{line}:UNDER", "Calci d'angolo", f"Under {line} corner", 1 - po))
+            for line in (3.5, 4.5, 5.5):
+                po = norm_over(cards_mu_book, 2.0, line)
+                sel.append((f"CARD:{line}:OVER", "Cartellini", f"Over {line} cartellini", po))
+                sel.append((f"CARD:{line}:UNDER", "Cartellini", f"Under {line} cartellini", 1 - po))
             return sel
 
         markets: list[MarketOdds] = []

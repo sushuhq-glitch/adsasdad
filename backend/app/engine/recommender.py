@@ -41,6 +41,52 @@ def _reliability(ev: MarketEvaluation) -> str:
     return "Bassa"
 
 
+def _market_rationale(analysis: MatchAnalysis, ev: MarketEvaluation) -> str:
+    """Motivazione specifica per il tipo di mercato selezionato, con i dati
+    che sostengono (o indeboliscono) proprio quella giocata."""
+    fx = analysis.fixture
+    sim = analysis.simulation
+    hf, af = analysis.home_form.last10, analysis.away_form.last10
+    kind = ev.market_id.split(":")[0]
+
+    if kind in {"1X2", "DC", "DNB", "AH", "COMBO"}:
+        return (
+            f"Lettura dell'esito: {fx.home_team.name} viaggia a {hf.points_per_game} punti/partita "
+            f"(xG {hf.xg_for:.1f} / xGA {hf.xg_against:.1f} nelle ultime 10), {fx.away_team.name} a "
+            f"{af.points_per_game} (xG {af.xg_for:.1f} / xGA {af.xg_against:.1f}). "
+            f"La simulazione assegna {sim.p_home:.0%} / {sim.p_draw:.0%} / {sim.p_away:.0%} agli esiti 1/X/2."
+        )
+    if kind in {"OU", "BTTS", "MG", "ODDEVEN", "HT", "TT", "EXACT", "CS", "WTN"}:
+        h2h = analysis.head_to_head.last10
+        return (
+            f"Lettura dei gol: gol attesi combinati {sim.lambda_home + sim.lambda_away:.2f} "
+            f"({sim.lambda_home:.2f} casa, {sim.lambda_away:.2f} trasferta). "
+            f"Negli scontri diretti il {h2h.over25_pct:.0f}% delle ultime 10 è finita Over 2.5 e il "
+            f"{h2h.btts_pct:.0f}% con entrambe a segno. Probabilità simulate: Over 1.5 "
+            f"{sim.over_under.get('1.5', 0):.0%}, Over 2.5 {sim.over_under.get('2.5', 0):.0%}, "
+            f"Over 3.5 {sim.over_under.get('3.5', 0):.0%}, Gol {sim.btts:.0%}; "
+            f"porta inviolata: casa {sim.clean_sheet_home:.0%}, trasferta {sim.clean_sheet_away:.0%}."
+        )
+    if kind == "CORN":
+        return (
+            f"Lettura dei corner: {fx.home_team.name} produce {hf.corners_for} corner a partita e ne "
+            f"concede {hf.corners_against}; {fx.away_team.name} rispettivamente {af.corners_for} e "
+            f"{af.corners_against}. Totale atteso dalla simulazione: {sim.corners_avg:.1f} corner "
+            f"(Over 8.5 {sim.corners_over.get('8.5', 0):.0%}, Over 9.5 {sim.corners_over.get('9.5', 0):.0%}, "
+            f"Over 10.5 {sim.corners_over.get('10.5', 0):.0%})."
+        )
+    if kind == "CARD":
+        ref = analysis.external.referee
+        derby = " Il contesto da derby alza ulteriormente l'attesa di cartellini." if analysis.motivation.is_derby else ""
+        return (
+            f"Lettura dei cartellini: le due squadre sommano {hf.yellow_cards + af.yellow_cards:.1f} gialli "
+            f"a partita nelle ultime 10; l'arbitro {ref.name} estrae in media {ref.avg_yellow_cards:.1f} gialli "
+            f"e fischia {ref.avg_fouls:.0f} falli a gara. Attesa simulata: {sim.cards_avg:.1f} cartellini "
+            f"(Over 3.5 {sim.cards_over.get('3.5', 0):.0%}, Over 4.5 {sim.cards_over.get('4.5', 0):.0%}).{derby}"
+        )
+    return ""
+
+
 def _build_reasoning(analysis: MatchAnalysis, ev: MarketEvaluation, target: float) -> str:
     fx = analysis.fixture
     sim = analysis.simulation
@@ -57,6 +103,9 @@ def _build_reasoning(analysis: MatchAnalysis, ev: MarketEvaluation, target: floa
         f"BTTS {sim.btts:.0%}.",
         f"Lettura tattica: {analysis.tactical_verdict}",
     ]
+    rationale = _market_rationale(analysis, ev)
+    if rationale:
+        lines.insert(2, rationale)
     h2h = analysis.head_to_head.last10
     lines.append(
         f"Scontri diretti (ultimi 10): {h2h.home_team_wins} vittorie {fx.home_team.name}, {h2h.draws} pareggi, "

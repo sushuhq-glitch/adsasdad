@@ -40,6 +40,11 @@ def simulate_match(
     ga = rng.poisson(np.clip(lam_a * state, 0.02, None))
     total = gh + ga
 
+    # primo tempo: ~44% dei gol arrivano nella prima frazione
+    gh1 = rng.binomial(gh, 0.44)
+    ga1 = rng.binomial(ga, 0.44)
+    total_1h = gh1 + ga1
+
     p_home = float(np.mean(gh > ga))
     p_draw = float(np.mean(gh == ga))
     p_away = float(np.mean(gh < ga))
@@ -82,6 +87,35 @@ def simulate_match(
         "away_over_2.5": round(float(np.mean(ga > 2.5)), 4),
     }
 
+    corners_over = {
+        str(line): round(float(np.mean(corners > line)), 4)
+        for line in (7.5, 8.5, 9.5, 10.5, 11.5)
+    }
+    cards_over = {
+        str(line): round(float(np.mean(cards > line)), 4)
+        for line in (2.5, 3.5, 4.5, 5.5)
+    }
+    first_half_over = {
+        "0.5": round(float(np.mean(total_1h > 0.5)), 4),
+        "1.5": round(float(np.mean(total_1h > 1.5)), 4),
+    }
+    goals_odd = round(float(np.mean(total % 2 == 1)), 4)
+    multigol = {
+        f"{lo}-{hi}": round(float(np.mean((total >= lo) & (total <= hi))), 4)
+        for lo, hi in ((1, 2), (1, 3), (2, 3), (2, 4), (3, 5))
+    }
+    home_win = gh > ga
+    away_win = ga > gh
+    combos = {
+        "HOME&O1.5": round(float(np.mean(home_win & (total > 1.5))), 4),
+        "HOME&O2.5": round(float(np.mean(home_win & (total > 2.5))), 4),
+        "HOME&U3.5": round(float(np.mean(home_win & (total < 3.5))), 4),
+        "AWAY&O1.5": round(float(np.mean(away_win & (total > 1.5))), 4),
+        "AWAY&O2.5": round(float(np.mean(away_win & (total > 2.5))), 4),
+        "AWAY&U3.5": round(float(np.mean(away_win & (total < 3.5))), 4),
+        "DRAW&U2.5": round(float(np.mean((gh == ga) & (total < 2.5))), 4),
+    }
+
     # anytime scorer probabilities from player xG shares
     top_scorers: dict[str, float] = {}
     for players, lam, side in ((home_scorers or [], lam_h, "H"), (away_scorers or [], lam_a, "A")):
@@ -109,4 +143,14 @@ def simulate_match(
         handicap=handicap,
         team_totals=team_totals,
         top_scorers=dict(sorted(top_scorers.items(), key=lambda kv: kv[1], reverse=True)[:8]),
+        corners_over=corners_over,
+        cards_over=cards_over,
+        first_half_over=first_half_over,
+        goals_odd=goals_odd,
+        multigol=multigol,
+        combos=combos,
+        clean_sheet_home=round(float(np.mean(ga == 0)), 4),
+        clean_sheet_away=round(float(np.mean(gh == 0)), 4),
+        win_to_nil_home=round(float(np.mean(home_win & (ga == 0))), 4),
+        win_to_nil_away=round(float(np.mean(away_win & (gh == 0))), 4),
     )

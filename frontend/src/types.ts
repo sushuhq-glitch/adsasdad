@@ -241,6 +241,16 @@ export interface SimulationSummary {
   handicap: Record<string, number>
   team_totals: Record<string, number>
   top_scorers: Record<string, number>
+  corners_over: Record<string, number>
+  cards_over: Record<string, number>
+  first_half_over: Record<string, number>
+  goals_odd: number
+  multigol: Record<string, number>
+  combos: Record<string, number>
+  clean_sheet_home: number
+  clean_sheet_away: number
+  win_to_nil_home: number
+  win_to_nil_away: number
 }
 
 export interface MarketEvaluation {

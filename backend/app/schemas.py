@@ -273,6 +273,17 @@ class SimulationSummary(BaseModel):
     handicap: dict[str, float]  # asian handicap cover probabilities
     team_totals: dict[str, float]
     top_scorers: dict[str, float] = Field(default_factory=dict)  # anytime scorer probs
+    # mercati estesi
+    corners_over: dict[str, float] = Field(default_factory=dict)  # {"8.5": p, ...}
+    cards_over: dict[str, float] = Field(default_factory=dict)
+    first_half_over: dict[str, float] = Field(default_factory=dict)  # {"0.5": p, "1.5": p}
+    goals_odd: float = 0.5  # totale gol dispari
+    multigol: dict[str, float] = Field(default_factory=dict)  # {"1-2": p, "2-4": p, ...}
+    combos: dict[str, float] = Field(default_factory=dict)  # {"HOME&O1.5": p, ...}
+    clean_sheet_home: float = 0.0
+    clean_sheet_away: float = 0.0
+    win_to_nil_home: float = 0.0
+    win_to_nil_away: float = 0.0
 
 
 class MarketEvaluation(BaseModel):

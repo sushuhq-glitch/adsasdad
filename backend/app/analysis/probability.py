@@ -93,6 +93,55 @@ def draw_no_bet_prob(m: list[list[float]], home: bool) -> float:
     return win / denom if denom > 1e-9 else 0.0
 
 
+def goals_odd_prob(m: list[list[float]]) -> float:
+    return sum(
+        m[i][j] for i in range(len(m)) for j in range(len(m)) if (i + j) % 2 == 1
+    )
+
+
+def multigol_prob(m: list[list[float]], lo: int, hi: int) -> float:
+    """Probabilità che il totale gol sia compreso tra lo e hi inclusi."""
+    return sum(
+        m[i][j] for i in range(len(m)) for j in range(len(m)) if lo <= i + j <= hi
+    )
+
+
+def combo_prob(m: list[list[float]], side: str, line: float, over: bool) -> float:
+    """Esito finale combinato con Over/Under (es. 1 & Over 1.5)."""
+    p = 0.0
+    for i in range(len(m)):
+        for j in range(len(m)):
+            if side == "HOME" and not i > j:
+                continue
+            if side == "AWAY" and not j > i:
+                continue
+            if side == "DRAW" and i != j:
+                continue
+            total = i + j
+            if (over and total > line) or (not over and total < line):
+                p += m[i][j]
+    return p
+
+
+def clean_sheet_prob(m: list[list[float]], home: bool) -> float:
+    if home:
+        return sum(m[i][0] for i in range(len(m)))
+    return sum(m[0][j] for j in range(len(m)))
+
+
+def win_to_nil_prob(m: list[list[float]], home: bool) -> float:
+    if home:
+        return sum(m[i][0] for i in range(1, len(m)))
+    return sum(m[0][j] for j in range(1, len(m)))
+
+
+def first_half_over_prob(lambda_home: float, lambda_away: float, line: float,
+                         share: float = 0.44) -> float:
+    """Over nel primo tempo: quota tipica del 44% dei gol nella prima frazione."""
+    m1 = score_matrix(lambda_home * share, lambda_away * share, rho=-0.05)
+    return over_prob(m1, line)
+
+
 def exact_score_probs(m: list[list[float]], top: int = 8) -> dict[str, float]:
     flat = [
         (f"{i}-{j}", m[i][j]) for i in range(min(6, len(m))) for j in range(min(6, len(m)))

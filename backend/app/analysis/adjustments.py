@@ -248,7 +248,8 @@ def apply_adjustments(
         add("risk", "Vento forte", f"Vento a {w.wind_kmh} km/h che disturba lanci e cross", -0.07)
     ref = external.referee
     if ref.avg_yellow_cards > 4.6:
-        res.cards_multiplier *= 1.15
+        # la propensione dell'arbitro è già incorporata nel tasso di cartellini
+        # della simulazione: qui resta solo come fattore informativo
         add("risk", "Arbitro severo",
             f"{ref.name}: {ref.avg_yellow_cards:.1f} gialli e {ref.penalties_per_match:.2f} rigori a partita", -0.04)
     if external.crowd_factor > 0.85:
