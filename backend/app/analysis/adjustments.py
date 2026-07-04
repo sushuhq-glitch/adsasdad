@@ -194,18 +194,22 @@ def apply_adjustments(
             f"Il {w10.under25_pct:.0f}% degli ultimi 10 confronti è finito Under 2.5", -0.08)
 
     # ------------------------------------------------------------------
-    # 5. Fattore campo
+    # 5. Fattore campo (saltato su campo neutro, es. fasi finali dei Mondiali)
     # ------------------------------------------------------------------
-    if home_venue.home_advantage_index > 0.35:
+    neutral_venue = fixture.league_id == "world-cup"
+    if neutral_venue:
+        add("risk", "Campo neutro",
+            "Gara di torneo su campo neutro: nessun vero fattore casa, entrambe le squadre in trasferta", -0.05)
+    if not neutral_venue and home_venue.home_advantage_index > 0.35:
         res.lambda_home *= 1.06
         add("favorable", f"{home_name} fortissimo in casa",
             f"{home_venue.home_ppg} punti/partita in casa contro {home_venue.away_ppg} in trasferta "
             f"({home_venue.home_goals_for_avg:.1f} gol segnati a partita in casa)", 0.13)
-    if away_venue.away_ppg < 1.0:
+    if not neutral_venue and away_venue.away_ppg < 1.0:
         res.lambda_away *= 0.94
         add("favorable", f"{away_name} debole in trasferta",
             f"Solo {away_venue.away_ppg} punti/partita fuori casa, con {away_venue.away_goals_against_avg:.1f} gol subiti a gara", 0.11)
-    elif away_venue.away_ppg > 1.8:
+    elif not neutral_venue and away_venue.away_ppg > 1.8:
         res.lambda_away *= 1.05
         add("risk", f"{away_name} ottimo in trasferta",
             f"{away_venue.away_ppg} punti/partita lontano da casa", -0.1)
@@ -248,13 +252,26 @@ def apply_adjustments(
         add("risk", "Arbitro severo",
             f"{ref.name}: {ref.avg_yellow_cards:.1f} gialli e {ref.penalties_per_match:.2f} rigori a partita", -0.04)
     if external.crowd_factor > 0.85:
-        res.lambda_home *= 1.03
-        add("favorable", "Grande pubblico atteso",
-            f"Stadio al {external.stadium_capacity_pct:.0f}% della capienza (~{external.expected_attendance:,} spettatori)", 0.06)
-    if external.away_travel_km > 1000:
+        if not neutral_venue:
+            res.lambda_home *= 1.03
+            add("favorable", "Grande pubblico atteso",
+                f"Stadio al {external.stadium_capacity_pct:.0f}% della capienza (~{external.expected_attendance:,} spettatori)", 0.06)
+    if not neutral_venue and external.away_travel_km > 1000:
         res.lambda_away *= 0.98
         add("favorable", "Trasferta lunga",
             f"Il {away_name} percorre {external.away_travel_km:.0f} km per questa gara", 0.04)
+    elif neutral_venue and abs(external.home_travel_km - external.away_travel_km) > 1500:
+        penalised_home = external.home_travel_km > external.away_travel_km
+        who = home_name if penalised_home else away_name
+        if penalised_home:
+            res.lambda_home *= 0.98
+        else:
+            res.lambda_away *= 0.98
+        add("risk" if penalised_home else "favorable", "Viaggio più lungo tra le sedi del torneo",
+            f"{who} ha percorso {max(external.home_travel_km, external.away_travel_km):.0f} km "
+            f"(avversario: {min(external.home_travel_km, external.away_travel_km):.0f} km)"
+            + (f", con {external.timezone_shift_hours}h di fuso" if external.timezone_shift_hours else ""),
+            -0.04 if penalised_home else 0.04)
 
     # limiti di sicurezza sui tassi
     res.lambda_home = _clamp(res.lambda_home * res.goals_multiplier, 0.15, 4.5)

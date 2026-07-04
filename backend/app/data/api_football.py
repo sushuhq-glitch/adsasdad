@@ -21,6 +21,7 @@ BASE_URL = "https://v3.football.api-sports.io"
 
 # API-Football league ids for the competitions bundled in the demo universe
 LEAGUE_MAP = {
+    "world-cup": 1,
     "serie-a": 135,
     "premier-league": 39,
     "la-liga": 140,

@@ -44,6 +44,7 @@ from .base import DataProvider
 # Static universe
 # ---------------------------------------------------------------------------
 LEAGUES = [
+    League(id="world-cup", name="FIFA World Cup 2026", country="International"),
     League(id="serie-a", name="Serie A", country="Italy"),
     League(id="premier-league", name="Premier League", country="England"),
     League(id="la-liga", name="La Liga", country="Spain"),
@@ -54,6 +55,19 @@ LEAGUES = [
 
 # (name, attack, defense) — ratings on a 0..1 scale, 0.5 = league average
 TEAMS: dict[str, list[tuple[str, float, float]]] = {
+    "world-cup": [
+        ("Argentina", 0.90, 0.84), ("Francia", 0.90, 0.82), ("Spagna", 0.88, 0.82),
+        ("Inghilterra", 0.84, 0.82), ("Brasile", 0.86, 0.76), ("Portogallo", 0.84, 0.76),
+        ("Germania", 0.80, 0.72), ("Olanda", 0.78, 0.76), ("Italia", 0.72, 0.80),
+        ("Belgio", 0.74, 0.68), ("Croazia", 0.70, 0.70), ("Uruguay", 0.70, 0.72),
+        ("Marocco", 0.66, 0.76), ("Colombia", 0.70, 0.68), ("Stati Uniti", 0.64, 0.64),
+        ("Messico", 0.62, 0.64), ("Giappone", 0.66, 0.66), ("Senegal", 0.64, 0.62),
+        ("Svizzera", 0.60, 0.68), ("Danimarca", 0.62, 0.64), ("Ecuador", 0.58, 0.64),
+        ("Corea del Sud", 0.58, 0.56), ("Australia", 0.52, 0.58), ("Canada", 0.56, 0.54),
+        ("Norvegia", 0.68, 0.58), ("Austria", 0.60, 0.60), ("Turchia", 0.62, 0.56),
+        ("Egitto", 0.56, 0.60), ("Nigeria", 0.60, 0.54), ("Paraguay", 0.50, 0.60),
+        ("Costa Rica", 0.46, 0.56), ("Panama", 0.44, 0.50),
+    ],
     "serie-a": [
         ("Inter", 0.86, 0.84), ("Napoli", 0.80, 0.78), ("Juventus", 0.72, 0.82),
         ("Milan", 0.78, 0.68), ("Atalanta", 0.82, 0.70), ("Roma", 0.68, 0.66),
@@ -116,6 +130,13 @@ DERBIES = {
 }
 
 BOOKMAKERS = ["Bet365", "Pinnacle", "William Hill", "Unibet", "Betfair", "888sport", "Snai", "Sisal"]
+
+WORLD_CUP_VENUES = [
+    "MetLife Stadium, New York/New Jersey", "SoFi Stadium, Los Angeles",
+    "AT&T Stadium, Dallas", "Hard Rock Stadium, Miami", "Estadio Azteca, Città del Messico",
+    "BMO Field, Toronto", "BC Place, Vancouver", "Mercedes-Benz Stadium, Atlanta",
+    "NRG Stadium, Houston", "Lumen Field, Seattle",
+]
 
 REFEREES = [
     ("Daniele Orsato", 4.2, 0.18, 24.1, 0.34, 0.46),
@@ -198,13 +219,18 @@ class DemoProvider(DataProvider):
         # play matches only on some days per league (like a real calendar)
         weekday = datetime.fromisoformat(date).weekday()
         matchdays = {
+            "world-cup": {0, 1, 2, 3, 4, 5, 6},  # partite ogni giorno durante il torneo
             "serie-a": {5, 6, 0}, "premier-league": {5, 6}, "la-liga": {4, 5, 6},
             "bundesliga": {4, 5}, "ligue-1": {5, 6}, "champions-league": {1, 2},
         }[league_id]
         if weekday not in matchdays:
             return []
-        n_matches = min(len(teams) // 2, rng.randint(3, 6))
-        kickoffs = ["12:30", "15:00", "18:00", "20:45"]
+        if league_id == "world-cup":
+            n_matches = rng.randint(2, 4)  # fase a eliminazione diretta
+            kickoffs = ["16:00", "19:00", "22:00", "01:00"]  # fusi USA/Canada/Messico
+        else:
+            n_matches = min(len(teams) // 2, rng.randint(3, 6))
+            kickoffs = ["12:30", "15:00", "18:00", "20:45"]
         fixtures = []
         league_name = next(lg.name for lg in LEAGUES if lg.id == league_id)
         for i in range(n_matches):
@@ -217,6 +243,13 @@ class DemoProvider(DataProvider):
             )[0]
             if league_id == "champions-league":
                 importance = rng.choice(["group decider", "knockout", "regular"])
+            round_label = f"Matchday {rng.randint(20, 34)}"
+            venue = f"{home.name} Stadium"
+            if league_id == "world-cup":
+                importance = "knockout"
+                round_label = rng.choice(
+                    ["Ottavi di finale", "Quarti di finale", "Semifinale", "Finale 3° posto"])
+                venue = rng.choice(WORLD_CUP_VENUES)
             fixtures.append(
                 Fixture(
                     id=f"{league_id}|{date}|{_slug(home.name)}|{_slug(away.name)}",
@@ -225,8 +258,8 @@ class DemoProvider(DataProvider):
                     home_team=home,
                     away_team=away,
                     kickoff_utc=f"{date}T{ko}:00Z",
-                    venue=f"{home.name} Stadium",
-                    round=f"Matchday {rng.randint(20, 34)}",
+                    venue=venue,
+                    round=round_label,
                     importance=importance,
                 )
             )
@@ -246,6 +279,8 @@ class DemoProvider(DataProvider):
         h, a = fixture.home_team, fixture.away_team
         rng = _rng("lambda", fixture.id)
         home_adv = 0.28 + rng.uniform(-0.05, 0.08)
+        if fixture.league_id == "world-cup":
+            home_adv *= 0.25  # campo neutro: resta solo un piccolo bias della "squadra di casa" del tabellone
         lam_h = max(0.25, 1.42 * (0.55 + h.attack) * (1.45 - a.defense) + home_adv * 0.55)
         lam_a = max(0.20, 1.42 * (0.55 + a.attack) * (1.45 - h.defense) - home_adv * 0.35)
         lam_h *= rng.uniform(0.94, 1.06)
@@ -474,13 +509,13 @@ class DemoProvider(DataProvider):
         rng = _rng("motivation", fixture.id)
         is_derby = fixture.importance == "derby"
         contexts = {
-            "derby": ("Local derby — pride and bragging rights at stake", 0.92),
-            "title race": ("Directly fighting for the title", 0.9),
-            "relegation battle": ("Every point vital for survival", 0.88),
-            "european qualification": ("Chasing a European spot", 0.78),
-            "group decider": ("Qualification decided in this match", 0.9),
-            "knockout": ("Knockout tie — no second chances", 0.95),
-            "regular": ("Mid-table match with limited stakes", 0.55),
+            "derby": ("Derby: orgoglio e rivalità cittadina in palio", 0.92),
+            "title race": ("In piena lotta per il titolo", 0.9),
+            "relegation battle": ("Ogni punto è vitale per la salvezza", 0.88),
+            "european qualification": ("A caccia di un posto nelle coppe europee", 0.78),
+            "group decider": ("La qualificazione si decide in questa partita", 0.9),
+            "knockout": ("Eliminazione diretta: chi perde è fuori", 0.95),
+            "regular": ("Gara di metà classifica con posta in palio limitata", 0.55),
         }
         base_ctx, base = contexts.get(fixture.importance, contexts["regular"])
         hm = min(1.0, base + rng.uniform(-0.08, 0.08))
@@ -496,8 +531,13 @@ class DemoProvider(DataProvider):
     # ------------------------------------------------------------------
     def external_factors(self, fixture: Fixture) -> ExternalFactors:
         rng = _rng("external", fixture.id)
-        condition = rng.choices(["clear", "cloudy", "rain", "heavy rain", "wind", "snow"],
-                                weights=[38, 25, 18, 8, 8, 3])[0]
+        world_cup = fixture.league_id == "world-cup"
+        if world_cup:  # torneo estivo in Nord America: niente neve, caldo frequente
+            condition = rng.choices(["clear", "cloudy", "rain", "heavy rain", "wind"],
+                                    weights=[48, 26, 14, 6, 6])[0]
+        else:
+            condition = rng.choices(["clear", "cloudy", "rain", "heavy rain", "wind", "snow"],
+                                    weights=[38, 25, 18, 8, 8, 3])[0]
         rain = {"clear": 0.0, "cloudy": 0.0, "rain": rng.uniform(1, 5),
                 "heavy rain": rng.uniform(6, 15), "wind": 0.0, "snow": 0.0}[condition]
         ref = rng.choice(REFEREES)
@@ -506,7 +546,7 @@ class DemoProvider(DataProvider):
         return ExternalFactors(
             weather=WeatherReport(
                 condition=condition,
-                temperature_c=round(rng.uniform(-2, 28), 1),
+                temperature_c=round(rng.uniform(18, 35) if world_cup else rng.uniform(-2, 28), 1),
                 rain_mm=round(rain, 1),
                 snow=condition == "snow",
                 wind_kmh=round(rng.uniform(2, 38) if condition == "wind" else rng.uniform(2, 16), 1),
@@ -520,9 +560,9 @@ class DemoProvider(DataProvider):
                 penalties_per_match=ref[4], home_win_pct_officiated=round(ref[5] * 100, 1),
             ),
             var_active=True,
-            home_travel_km=0.0,
-            away_travel_km=round(rng.uniform(80, 1400), 0),
-            timezone_shift_hours=0,
+            home_travel_km=round(rng.uniform(500, 3500), 0) if world_cup else 0.0,
+            away_travel_km=round(rng.uniform(500, 3500), 0) if world_cup else round(rng.uniform(80, 1400), 0),
+            timezone_shift_hours=rng.choice([0, 1, 2, 3]) if world_cup else 0,
             expected_attendance=int(capacity * att_pct),
             stadium_capacity_pct=round(att_pct * 100, 1),
             crowd_factor=round(att_pct * rng.uniform(0.75, 1.0), 2),
