@@ -299,6 +299,10 @@ class MarketEvaluation(BaseModel):
     edge_over_market: float  # our prob - implied prob (de-vigged)
     confidence: float  # 0..1 model agreement / data quality
     kelly_fraction: float
+    # scomposizione della confidenza in componenti verificabili (0..1)
+    confidence_breakdown: dict[str, float] = Field(default_factory=dict)
+    # checklist di affidabilità leggibile ("✓ ...", "⚠ ...")
+    checks: list[str] = Field(default_factory=list)
 
 
 class KeyFactor(BaseModel):

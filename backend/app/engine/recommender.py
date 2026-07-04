@@ -116,8 +116,15 @@ def _build_reasoning(analysis: MatchAnalysis, ev: MarketEvaluation, target: floa
         f"Contesto: arbitro {ref.name} ({ref.avg_yellow_cards:.1f} gialli/gara), meteo {analysis.external.weather.condition}, "
         f"campo {analysis.external.weather.pitch_condition}, pubblico al {analysis.external.stadium_capacity_pct:.0f}%."
     )
+    if ev.checks:
+        lines.append("Checklist di affidabilità:\n" + "\n".join(f"  {c}" for c in ev.checks))
     lines.append(
-        f"Confidenza del modello: {ev.confidence:.0%} (accordo tra i modelli dell'ensemble e qualità dei dati). "
+        f"Confidenza complessiva: {ev.confidence:.0%} — media pesata di accordo tra modelli "
+        f"({ev.confidence_breakdown.get('accordo_modelli', 0):.0%}), qualità dei dati "
+        f"({ev.confidence_breakdown.get('qualita_dati', 0):.0%}), consenso bookmaker "
+        f"({ev.confidence_breakdown.get('consenso_bookmaker', 0):.0%}), stabilità della quota "
+        f"({ev.confidence_breakdown.get('stabilita_quota', 0):.0%}) e liquidità del mercato "
+        f"({ev.confidence_breakdown.get('liquidita_mercato', 0):.0%}). "
         f"Frazione di Kelly suggerita: {ev.kelly_fraction:.1%} del bankroll (cap 25%)."
     )
     return "\n\n".join(lines)

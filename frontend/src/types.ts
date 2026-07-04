@@ -266,6 +266,8 @@ export interface MarketEvaluation {
   edge_over_market: number
   confidence: number
   kelly_fraction: number
+  confidence_breakdown: Record<string, number>
+  checks: string[]
 }
 
 export interface KeyFactor {

@@ -11,6 +11,14 @@ import {
 import type { Recommendation } from '../types'
 import { pct, ProbBar, ReliabilityBadge, signed } from './shared'
 
+const CONF_LABELS: Record<string, string> = {
+  accordo_modelli: 'Accordo tra i modelli',
+  qualita_dati: 'Qualità dei dati',
+  consenso_bookmaker: 'Consenso bookmaker',
+  stabilita_quota: 'Stabilità della quota',
+  liquidita_mercato: 'Liquidità del mercato',
+}
+
 export default function RecommendationCard({ rec }: { rec: Recommendation }) {
   const m = rec.market
   const modelData = rec.model_breakdown.map((mb) => ({
@@ -69,6 +77,30 @@ export default function RecommendationCard({ rec }: { rec: Recommendation }) {
       </div>
 
       <div className="reasoning">{rec.reasoning}</div>
+
+      {Object.keys(m.confidence_breakdown ?? {}).length > 0 && (
+        <>
+          <p className="sub-title">Da dove nasce la confidenza ({pct(m.confidence, 0)})</p>
+          <div className="conf-grid">
+            {Object.entries(m.confidence_breakdown).map(([k, v]) => (
+              <div key={k} className="conf-item">
+                <div className="conf-label">
+                  <span>{CONF_LABELS[k] ?? k}</span>
+                  <span className="mono">{pct(v, 0)}</span>
+                </div>
+                <ProbBar value={v} />
+              </div>
+            ))}
+          </div>
+          {m.checks?.length > 0 && (
+            <div className="checks">
+              {m.checks.map((c, i) => (
+                <div key={i} className={`check-line ${c.startsWith('✓') ? 'ok' : c.startsWith('⚠') ? 'warn' : 'bad'}`}>{c}</div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
 
       <div className="factors-grid">
         <div>

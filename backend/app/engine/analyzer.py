@@ -147,15 +147,79 @@ def _evaluate_markets(
             if overround > 0:
                 devig = implied / overround
         value = p * mk.best_odds - 1.0
-        # confidenza: accordo tra modelli * qualità dati * distanza dagli estremi
-        extremity = 1.0 - abs(p - 0.5) * 0.35
-        confidence = max(0.0, min(1.0, agreement * data_quality * extremity))
-        # mercati secondari: meno liquidi e con dati meno ricchi -> confidenza ridotta
+
+        # ------------------------------------------------------------------
+        # Confidenza scomposta in 5 componenti verificabili
+        # ------------------------------------------------------------------
         kind = mk.market_id.split(":")[0]
+        # 1) accordo tra i modelli dell'ensemble (dispersione delle probabilità)
+        c_models = max(0.0, min(1.0, agreement))
+        # 2) qualità/completezza dei dati (formazioni ufficiali, fonti)
+        c_data = max(0.0, min(1.0, data_quality))
+        # 3) consenso tra bookmaker: spread ridotto = mercato efficiente e letto bene
+        if mk.books:
+            odds_list = [b.odds for b in mk.books]
+            spread = (max(odds_list) - min(odds_list)) / max(mk.avg_odds, 1e-9)
+            c_consensus = max(0.0, min(1.0, 1.0 - spread * 2.5))
+        else:
+            c_consensus = 0.5
+        # 4) stabilità della quota nelle ultime 24h (movimenti bruschi = allerta)
+        c_stability = max(0.0, min(1.0, 1.0 - abs(mk.movement_pct) / 15.0))
+        if mk.suspicious_move:
+            c_stability = min(c_stability, 0.35)
+        # 5) liquidità/profondità del mercato (i secondari hanno meno dati)
+        c_liquidity = 1.0
         if kind in {"CORN", "CARD"}:
-            confidence *= 0.85
+            c_liquidity = 0.8
         elif kind == "EXACT":
-            confidence *= 0.75
+            c_liquidity = 0.65
+        elif kind in {"COMBO", "MG", "WTN", "CS", "HT", "ODDEVEN"}:
+            c_liquidity = 0.9
+
+        breakdown = {
+            "accordo_modelli": round(c_models, 3),
+            "qualita_dati": round(c_data, 3),
+            "consenso_bookmaker": round(c_consensus, 3),
+            "stabilita_quota": round(c_stability, 3),
+            "liquidita_mercato": round(c_liquidity, 3),
+        }
+        confidence = (
+            0.32 * c_models + 0.18 * c_data + 0.18 * c_consensus
+            + 0.16 * c_stability + 0.16 * c_liquidity
+        )
+        # selezioni con probabilità estreme: campione simulato meno informativo
+        confidence *= 1.0 - abs(p - 0.5) * 0.12
+        confidence = max(0.0, min(1.0, confidence))
+
+        def check(v: float, ok: str, warn: str, bad: str) -> str:
+            if v >= 0.75:
+                return f"✓ {ok}"
+            if v >= 0.5:
+                return f"⚠ {warn}"
+            return f"✗ {bad}"
+
+        checks = [
+            check(c_models,
+                  f"I modelli dell'ensemble concordano (dispersione contenuta)",
+                  "Accordo tra i modelli solo parziale",
+                  "I modelli divergono sensibilmente su questo esito"),
+            check(c_data,
+                  "Dati completi e coerenti tra le fonti",
+                  "Formazioni non ancora ufficiali",
+                  "Dati incompleti: prudenza"),
+            check(c_consensus,
+                  "Bookmaker allineati sulla quota (mercato efficiente)",
+                  "Quote leggermente disallineate tra i bookmaker",
+                  "Forte disaccordo tra i bookmaker su questa selezione"),
+            check(c_stability,
+                  "Quota stabile nelle ultime 24 ore",
+                  f"Quota mossa del {mk.movement_pct:+.1f}% dall'apertura",
+                  f"Movimento anomalo della quota ({mk.movement_pct:+.1f}%): possibile notizia non pubblica"),
+            ("✓ Mercato principale ad alta liquidità" if c_liquidity >= 0.95
+             else "⚠ Mercato secondario: liquidità e dati più limitati" if c_liquidity >= 0.75
+             else "✗ Mercato di nicchia: usa puntate ridotte"),
+        ]
+
         b = mk.best_odds - 1.0
         kelly = max(0.0, (p * b - (1 - p)) / b) if b > 0 else 0.0
         evals.append(
@@ -171,6 +235,8 @@ def _evaluate_markets(
                 edge_over_market=round((p - devig) * 100, 2),
                 confidence=round(confidence, 3),
                 kelly_fraction=round(min(kelly, 0.25), 4),
+                confidence_breakdown=breakdown,
+                checks=checks,
             )
         )
     evals.sort(key=lambda e: e.probability, reverse=True)
