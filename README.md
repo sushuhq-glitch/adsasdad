@@ -85,9 +85,14 @@ cd backend && python3 -m pytest tests -q
 
 ## Fonti dati
 
-Senza chiavi API la piattaforma usa un **feed demo deterministico** (stesse partite → stessi dati
-→ stesse probabilità), che rende ogni funzione testabile end-to-end. Configurando le variabili
-d'ambiente vengono attivati gli adapter live, con fallback automatico e validazione dei payload:
+Il **calendario reale della FIFA World Cup 2026** (tabellone, date, stadi) viene scaricato
+automaticamente da TheSportsDB (API pubblica, nessuna chiave richiesta), con cache di 10 minuti e
+fallback al feed demo se la rete non è disponibile. Le partite già concluse vengono escluse.
+
+Per i campionati di club, senza chiavi API la piattaforma usa un **feed demo deterministico**
+(stesse partite → stessi dati → stesse probabilità), che rende ogni funzione testabile
+end-to-end. Configurando le variabili d'ambiente vengono attivati gli adapter live, con fallback
+automatico e validazione dei payload:
 
 | Variabile                  | Provider                    |
 | -------------------------- | --------------------------- |

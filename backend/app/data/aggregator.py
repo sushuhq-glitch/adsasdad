@@ -13,7 +13,8 @@ import logging
 from ..config import get_settings
 from .api_football import ApiFootballClient
 from .base import DataProvider
-from .demo_provider import DemoProvider
+from .demo_provider import LEAGUES, DemoProvider
+from .thesportsdb import WorldCupLiveProvider
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +26,8 @@ class DataAggregator:
         self.live: ApiFootballClient | None = None
         if settings.api_football_key:
             self.live = ApiFootballClient(settings.api_football_key)
+        # calendario reale del Mondiale: API pubblica, nessuna chiave richiesta
+        self.worldcup = WorldCupLiveProvider()
         self._provider: DataProvider = self.demo
 
     # -- source bookkeeping -------------------------------------------------
@@ -32,6 +35,7 @@ class DataAggregator:
         srcs = []
         if self.live:
             srcs.append("API-Football (live)")
+        srcs.append("TheSportsDB (calendario reale World Cup 2026)")
         srcs.append("OddsLab demo feed (deterministic fallback)")
         srcs.append("Internal xG / Dixon-Coles model (validation layer)")
         return srcs
@@ -47,7 +51,18 @@ class DataAggregator:
                 log.warning("live leagues failed, falling back to demo: %s", exc)
         return self._provider.leagues(sport)
 
+    def _worldcup_fixtures(self, date: str | None):
+        """Partite reali del Mondiale; feed demo solo se la rete fallisce."""
+        try:
+            return self.worldcup.fixtures(date)
+        except Exception as exc:
+            log.warning("thesportsdb worldcup failed, falling back to demo: %s", exc)
+            return self._provider.fixtures("world-cup", date)
+
     def fixtures(self, league_id: str | None = None, date: str | None = None):
+        if league_id == "world-cup":
+            return self._worldcup_fixtures(date)
+
         if self.live:
             try:
                 fixtures = self.live.fixtures(league_id, date)
@@ -55,9 +70,23 @@ class DataAggregator:
                     return fixtures
             except Exception as exc:
                 log.warning("live fixtures failed, falling back to demo: %s", exc)
-        return self._provider.fixtures(league_id, date)
+
+        if league_id:
+            return self._provider.fixtures(league_id, date)
+
+        # scansione completa: Mondiale reale + campionati di club
+        out = list(self._worldcup_fixtures(date))
+        for lg in LEAGUES:
+            if lg.id != "world-cup":
+                out.extend(self._provider.fixtures(lg.id, date))
+        out.sort(key=lambda f: f.kickoff_utc)
+        return out
 
     def fixture(self, fixture_id: str):
+        if fixture_id.startswith("world-cup|"):
+            fx = self.worldcup.fixture(fixture_id)
+            if fx:
+                return fx
         return self._provider.fixture(fixture_id)
 
     def team_form(self, fixture, home: bool):
