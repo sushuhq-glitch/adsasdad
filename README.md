@@ -58,6 +58,25 @@ npm run dev
 
 Apri <http://localhost:5173>.
 
+### Prova da telefono (stessa rete Wi-Fi)
+
+Modalità "tutto in uno": compila il frontend una volta e lascia che sia il backend a servirlo.
+
+```bash
+cd frontend && npm install && npm run build
+cd ../backend && pip install -r requirements.txt
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Poi, dal telefono connesso alla stessa rete del computer, apri `http://<ip-del-computer>:8000`
+(l'IP lo trovi con `ipconfig` su Windows o `ip addr` / `ifconfig` su macOS e Linux, ed è del tipo
+`192.168.x.x`). L'interfaccia è responsive e si adatta automaticamente allo schermo del telefono.
+
+In alternativa, anche il server di sviluppo è esposto sulla rete locale (`host: true` nella config
+di Vite): con `npm run dev` puoi aprire `http://<ip-del-computer>:5173` dal telefono, tenendo il
+backend attivo sulla porta 8000. Se il telefono non raggiunge il PC, verifica che il firewall
+consenta connessioni in ingresso sulla porta usata.
+
 I test:
 
 ```bash

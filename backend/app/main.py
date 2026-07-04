@@ -1,15 +1,23 @@
 """OddsLab — API REST.
 
-Avvio locale:
+Avvio locale (solo API):
     uvicorn app.main:app --reload --port 8000
+
+Avvio "tutto in uno" (API + interfaccia web, raggiungibile anche da telefono
+sulla stessa rete): compila prima il frontend (`npm run build` in frontend/),
+poi:
+    uvicorn app.main:app --host 0.0.0.0 --port 8000
+e apri http://<ip-del-pc>:8000 dal telefono.
 """
 from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .data.aggregator import get_aggregator
@@ -115,3 +123,14 @@ def recommend_bet(req: RecommendRequest) -> Recommendation:
 @app.get(f"{api}/history", response_model=list[HistoryEntry])
 def prediction_history(limit: int = 50) -> list[HistoryEntry]:
     return history.list_entries(limit)
+
+
+# ---------------------------------------------------------------------------
+# Modalità "tutto in uno": se il frontend è stato compilato (frontend/dist),
+# il backend lo serve direttamente. Basta un solo processo per usare la web
+# app anche da telefono/tablet sulla stessa rete.
+# ---------------------------------------------------------------------------
+_frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    app.mount("/", StaticFiles(directory=_frontend_dist, html=True), name="frontend")
+    log.info("frontend servito da %s", _frontend_dist)
