@@ -1,5 +1,6 @@
 import "dotenv/config";
 import type { Server } from "node:http";
+import { MaxProfitEngine } from "./analysis/max-profit-engine.js";
 import type { AppConfig } from "./config/schema.js";
 import { loadConfig } from "./config/schema.js";
 import { AlertBus } from "./lib/alert-bus.js";
@@ -7,18 +8,17 @@ import { logger } from "./lib/logger.js";
 import { nowIso } from "./lib/money.js";
 import { createInitialState, StateStore } from "./lib/state-store.js";
 import { MarketScanner } from "./scrapers/market-scanner.js";
-import { ZeroDoubtEngine } from "./security/zero-doubt-engine.js";
 import { TelegramService } from "./telegram/bot.js";
 import type { TelegramCommand } from "./telegram/commands.js";
 import { PositionManager } from "./trader/position-manager.js";
 import { buildExecutionRouter, type ExecutionRouter } from "./trader/venue-adapter.js";
 import { WalletManager } from "./trader/wallet-manager.js";
-import type { BotRuntimeState, DecisionResult, RejectedTrade } from "./types/index.js";
+import type { BotRuntimeState, DecisionResult, RejectedTrade, RiskTolerance } from "./types/index.js";
 import { startDashboard } from "./ui/server.js";
 
 /**
- * Controller principale H24:
- * scan → Zero Dubbi → buy/sell → Telegram/UI, con gestione eccezioni per-ciclo.
+ * Controller H24 — Max Profit Strategy:
+ * scan → analisi tecnica/social → risk % → buy/sell → Telegram/UI
  */
 export class BotController {
   readonly state: BotRuntimeState;
@@ -26,7 +26,7 @@ export class BotController {
   readonly telegram: TelegramService;
   readonly wallet: WalletManager;
   readonly scanner: MarketScanner;
-  readonly engine: ZeroDoubtEngine;
+  readonly engine: MaxProfitEngine;
   readonly router: ExecutionRouter;
   readonly positions: PositionManager;
   private readonly store = new StateStore();
@@ -38,11 +38,16 @@ export class BotController {
   private dailyLossSol = 0;
 
   constructor(private config: AppConfig) {
-    this.state = createInitialState(config.BUDGET_SOL, config.TRADING_MODE);
+    this.state = createInitialState(
+      config.BUDGET_SOL,
+      config.TRADING_MODE,
+      config.RISK_TOLERANCE,
+      config.MAX_RISK_PCT,
+    );
     this.telegram = new TelegramService(config);
     this.wallet = new WalletManager(config);
     this.scanner = new MarketScanner(config);
-    this.engine = new ZeroDoubtEngine(config);
+    this.engine = new MaxProfitEngine(config);
     this.router = buildExecutionRouter(config);
     this.positions = new PositionManager(config, this.router);
 
@@ -63,6 +68,10 @@ export class BotController {
     if (!Number.isFinite(this.state.residualBudgetSol)) {
       this.state.residualBudgetSol = this.config.BUDGET_SOL;
     }
+    this.state.riskTolerance = this.state.riskTolerance ?? this.config.RISK_TOLERANCE;
+    this.state.maxRiskPct = this.state.maxRiskPct ?? this.config.MAX_RISK_PCT;
+    this.engine.setRiskTolerance(this.state.riskTolerance);
+    this.engine.setMaxRiskPct(this.state.maxRiskPct);
     this.telegram.start(async (cmd, chatId) => this.handleCommand(cmd, chatId));
   }
 
@@ -72,7 +81,7 @@ export class BotController {
     this.state.status = "running";
     this.state.startedAt = this.state.startedAt ?? nowIso();
     await this.persist();
-    logger.info("Controller H24 avviato");
+    logger.info("Controller H24 Max Profit avviato");
 
     const tickScan = async () => {
       try {
@@ -123,6 +132,7 @@ export class BotController {
   }
 
   getState(): BotRuntimeState {
+    this.refreshAverageRisk();
     return this.state;
   }
 
@@ -146,6 +156,18 @@ export class BotController {
     await this.persist();
   }
 
+  async setRiskTolerance(tolerance: RiskTolerance): Promise<void> {
+    this.state.riskTolerance = tolerance;
+    this.engine.setRiskTolerance(tolerance);
+    await this.persist();
+  }
+
+  async setMaxRiskPct(pct: number): Promise<void> {
+    this.state.maxRiskPct = pct;
+    this.engine.setMaxRiskPct(pct);
+    await this.persist();
+  }
+
   async applyLiveInstruction(instruction: string): Promise<void> {
     this.state.liveInstructions.unshift(`${nowIso()} — ${instruction}`);
     this.state.liveInstructions = this.state.liveInstructions.slice(0, 50);
@@ -155,8 +177,16 @@ export class BotController {
   }
 
   async persist(): Promise<void> {
+    this.refreshAverageRisk();
     this.state.alerts = this.alerts.list();
     await this.store.save(this.state);
+  }
+
+  private refreshAverageRisk(): void {
+    const open = this.state.openPositions;
+    this.state.averageOpenRiskPct = open.length
+      ? open.reduce((a, p) => a + (p.riskPct ?? 0), 0) / open.length
+      : 0;
   }
 
   private canBuy(): boolean {
@@ -173,7 +203,12 @@ export class BotController {
     const { candidates, trends } = await this.scanner.scan();
     this.state.lastScanAt = nowIso();
 
-    for (const candidate of candidates) {
+    // Ordina per profit potential grezzo (volume + social) prima della decisione
+    const ranked = [...candidates].sort(
+      (a, b) => (b.volume24hUsd || 0) - (a.volume24hUsd || 0),
+    );
+
+    for (const candidate of ranked) {
       if (!this.wallet.validateMint(candidate.mint)) continue;
       const decision = await this.engine.evaluate(candidate, trends);
       if (decision.decision === "reject") {
@@ -224,11 +259,24 @@ export class BotController {
       order.filledTokenAmount,
       order.venue,
       decision.motivation,
+      {
+        riskPct: decision.assessment.risk.riskPct,
+        riskBand: decision.assessment.risk.band,
+        highProfitPotential: Boolean(decision.highProfitPotential),
+      },
     );
     this.state.openPositions.push(position);
     this.state.residualBudgetSol = Math.max(0, this.state.residualBudgetSol - position.amountSol);
     await this.telegram.notifyBuy(decision, position);
-    logger.info({ symbol: position.symbol, amountSol: position.amountSol }, "Buy eseguito");
+    logger.info(
+      {
+        symbol: position.symbol,
+        amountSol: position.amountSol,
+        riskPct: position.riskPct,
+        moonshot: position.highProfitPotential,
+      },
+      "Buy eseguito",
+    );
   }
 
   private async recordReject(decision: DecisionResult): Promise<void> {
@@ -236,15 +284,12 @@ export class BotController {
       at: nowIso(),
       candidate: decision.candidate,
       assessment: decision.assessment,
-      label: "Trade Rifiutato - Rischio Rilevato",
+      label: decision.rejectedAs ?? "Trade Rifiutato - Filtri Risk/Strategy",
       motivation: decision.motivation,
     };
     this.state.rejectedTrades.unshift(row);
     this.state.rejectedTrades = this.state.rejectedTrades.slice(0, 100);
-    if (
-      decision.assessment.safetyScore >= this.config.MIN_SAFETY_SCORE - 15 ||
-      decision.assessment.confidenceScore >= this.config.MIN_CONFIDENCE_SCORE - 15
-    ) {
+    if (decision.assessment.technical.profitPotentialScore >= 60) {
       await this.telegram.notifyReject(decision);
     }
   }
@@ -292,8 +337,8 @@ export class BotController {
     if (!rpcOk) {
       await this.alerts.push({
         severity: "warning",
-        title: "RPC Solana non raggiungibile",
-        message: "Verifica SOLANA_RPC_URL o la connessione di rete.",
+        title: "Anomalia di rete / RPC",
+        message: "RPC Solana non raggiungibile. Verifica SOLANA_RPC_URL.",
         requiresUpdate: false,
         source: "wallet",
       });
@@ -309,7 +354,7 @@ export class BotController {
             title: `Problema API ${h.venue}`,
             message:
               h.message ??
-              `Rilevato cambio endpoint su ${h.venue}. Invia un aggiornamento o rispondi a questo messaggio con la nuova configurazione.`,
+              `Cambio API o endpoint non raggiungibile su ${h.venue}. Aggiorna istruzioni/keyword via Telegram.`,
             requiresUpdate: true,
             source: h.venue,
           });
@@ -325,14 +370,21 @@ export class BotController {
         return `Bot in pausa.${cmd.reason ? ` Motivo: ${cmd.reason}` : ""}`;
       case "resume":
         await this.resume();
-        return "Bot ripreso (H24 running).";
+        return "Bot ripreso (H24 Max Profit running).";
       case "budget":
         await this.setBudget(cmd.amountSol);
-        return `Budget aggiornato a ${cmd.amountSol} SOL. Residuo stimato: ${this.state.residualBudgetSol.toFixed(4)} SOL`;
+        return `Budget aggiornato a ${cmd.amountSol} SOL. Residuo: ${this.state.residualBudgetSol.toFixed(4)} SOL`;
+      case "risk_tolerance":
+        await this.setRiskTolerance(cmd.tolerance);
+        return `Tolleranza rischio impostata: ${cmd.tolerance}`;
+      case "risk_max":
+        await this.setMaxRiskPct(cmd.maxRiskPct);
+        return `Rischio massimo impostato a ${cmd.maxRiskPct}%. Puoi regolare ulteriormente con /risk only_low | only_high.`;
       case "update":
         await this.applyLiveInstruction(cmd.instruction);
-        return `Istruzione ricevuta e applicata in runtime:\n${cmd.instruction}`;
+        return `Istruzione ricevuta:\n${cmd.instruction}`;
       case "status":
+        this.refreshAverageRisk();
         return [
           `Stato: ${this.state.status}`,
           `Mode: ${this.state.tradingMode}${this.config.DRY_RUN ? " (dry-run)" : ""}`,
@@ -340,7 +392,9 @@ export class BotController {
           `Residuo: ${this.state.residualBudgetSol.toFixed(4)} SOL`,
           `PnL: ${this.state.realizedPnlSol.toFixed(4)} SOL`,
           `Open: ${this.state.openPositions.length}`,
-          `Alert aperti: ${this.alerts.pendingUpdates().length}`,
+          `Risk tolerance: ${this.state.riskTolerance}`,
+          `Max risk: ${this.state.maxRiskPct}%`,
+          `Avg open risk: ${this.state.averageOpenRiskPct.toFixed(1)}%`,
         ].join("\n");
       default:
         return "Comando non gestito";
@@ -370,12 +424,12 @@ async function main(): Promise<void> {
     {
       mode: config.TRADING_MODE,
       dryRun: config.DRY_RUN,
-      minConfidence: config.MIN_CONFIDENCE_SCORE,
-      minSafety: config.MIN_SAFETY_SCORE,
-      venues: ["axiom", "anthem", "pumpfun"],
+      riskTolerance: config.RISK_TOLERANCE,
+      maxRiskPct: config.MAX_RISK_PCT,
+      venues: ["axiom", "anthem", "fomo", "pumpfun"],
       dashboard: `http://${config.DASHBOARD_HOST}:${config.DASHBOARD_PORT}`,
     },
-    "Solana Meme Bot H24 pronto",
+    "Solana Meme Bot H24 Max Profit pronto",
   );
 }
 

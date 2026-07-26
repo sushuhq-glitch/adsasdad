@@ -7,11 +7,10 @@ import type { AppConfig } from "../config/schema.js";
 import type { AlertBus } from "../lib/alert-bus.js";
 import { logger } from "../lib/logger.js";
 import type { WalletManager } from "../trader/wallet-manager.js";
-import type { BotRuntimeState } from "../types/index.js";
+import type { BotRuntimeState, RiskTolerance } from "../types/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-/** Contratto minimo usato dalla dashboard (evita import circolari con index.ts). */
 export interface DashboardController {
   alerts: AlertBus;
   wallet: WalletManager;
@@ -19,6 +18,8 @@ export interface DashboardController {
   pause(reason?: string): Promise<void>;
   resume(): Promise<void>;
   setBudget(amountSol: number): Promise<void>;
+  setRiskTolerance(tolerance: RiskTolerance): Promise<void>;
+  setMaxRiskPct(pct: number): Promise<void>;
   persist(): Promise<void>;
 }
 
@@ -55,11 +56,12 @@ export function startDashboard(controller: DashboardController, config: AppConfi
       ...state,
       pendingAlerts: controller.alerts.pendingUpdates(),
       thresholds: {
-        minConfidence: config.MIN_CONFIDENCE_SCORE,
-        minSafety: config.MIN_SAFETY_SCORE,
-        zeroDoubt: config.ZERO_DOUBT_MODE,
+        minProfitPotential: config.MIN_PROFIT_POTENTIAL,
+        riskTolerance: state.riskTolerance,
+        maxRiskPct: state.maxRiskPct,
       },
       wallet: controller.wallet.getPublicKey(),
+      venues: ["axiom", "anthem", "fomo", "pumpfun"],
     });
   });
 
@@ -83,6 +85,19 @@ export function startDashboard(controller: DashboardController, config: AppConfi
     await controller.setBudget(amount);
     const state = controller.getState();
     res.json({ ok: true, budgetSol: state.budgetSol, residualBudgetSol: state.residualBudgetSol });
+  });
+
+  app.post("/api/risk", auth, async (req, res) => {
+    const tolerance = req.body?.tolerance as RiskTolerance | undefined;
+    const maxRiskPct = Number(req.body?.maxRiskPct);
+    if (tolerance) await controller.setRiskTolerance(tolerance);
+    if (Number.isFinite(maxRiskPct) && maxRiskPct > 0) await controller.setMaxRiskPct(maxRiskPct);
+    const state = controller.getState();
+    res.json({
+      ok: true,
+      riskTolerance: state.riskTolerance,
+      maxRiskPct: state.maxRiskPct,
+    });
   });
 
   app.post("/api/alerts/:id/ack", auth, async (req, res) => {

@@ -114,6 +114,7 @@ export function buildExecutionRouter(config: AppConfig): ExecutionRouter {
   return new ExecutionRouter(config, paper, {
     axiom: new HttpVenueAdapter("axiom", config.AXIOM_API_BASE, config.AXIOM_API_KEY, dry, paper),
     anthem: new HttpVenueAdapter("anthem", config.ANTHEM_API_BASE, config.ANTHEM_API_KEY, dry, paper),
+    fomo: new HttpVenueAdapter("fomo", config.FOMO_API_BASE, config.FOMO_API_KEY, dry, paper),
     pumpfun: new HttpVenueAdapter(
       "pumpfun",
       config.PUMPFUN_API_BASE,

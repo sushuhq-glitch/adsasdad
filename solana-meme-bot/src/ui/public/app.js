@@ -4,15 +4,18 @@ const els = {
   botStatus: document.getElementById("botStatus"),
   pnl: document.getElementById("pnl"),
   residual: document.getElementById("residual"),
-  openCount: document.getElementById("openCount"),
+  avgRisk: document.getElementById("avgRisk"),
   positions: document.getElementById("positions"),
   alerts: document.getElementById("alerts"),
   rejects: document.getElementById("rejects"),
-  instructions: document.getElementById("instructions"),
+  closed: document.getElementById("closed"),
   pauseBtn: document.getElementById("pauseBtn"),
   resumeBtn: document.getElementById("resumeBtn"),
   budgetInput: document.getElementById("budgetInput"),
   budgetBtn: document.getElementById("budgetBtn"),
+  riskTolerance: document.getElementById("riskTolerance"),
+  maxRiskInput: document.getElementById("maxRiskInput"),
+  riskBtn: document.getElementById("riskBtn"),
 };
 
 const params = new URLSearchParams(location.search);
@@ -49,13 +52,16 @@ function render(state) {
   els.botStatus.textContent = state.status;
   els.pnl.textContent = `${Number(state.realizedPnlSol || 0).toFixed(4)} SOL`;
   els.residual.textContent = `${Number(state.residualBudgetSol || 0).toFixed(4)} SOL`;
-  els.openCount.textContent = String(state.openPositions?.length ?? 0);
+  els.avgRisk.textContent = `${Number(state.averageOpenRiskPct || 0).toFixed(1)}%`;
   els.budgetInput.value = state.budgetSol ?? "";
+  els.riskTolerance.value = state.riskTolerance || "all";
+  els.maxRiskInput.value = state.maxRiskPct ?? 85;
 
   renderList(els.positions, state.openPositions, (p) => `
     <div class="item">
-      <strong>$${p.symbol} · ${p.amountSol.toFixed(4)} SOL</strong>
-      Entry ${p.entryPriceUsd} · MC ${Math.round(p.marketCapAtEntry)} · ${p.venue}
+      <strong>$${p.symbol} · ${p.amountSol.toFixed(4)} SOL · Risk ${p.riskPct ?? "?"}%</strong>
+      Entry ${p.entryPriceUsd} · MC ${Math.round(p.marketCapAtEntry)} · TP ${p.takeProfitPct}%
+      ${p.highProfitPotential ? '<span class="badge">MOONSHOT</span>' : ""}
       <div>${p.motivation}</div>
     </div>
   `);
@@ -68,21 +74,23 @@ function render(state) {
         ${a.title}
       </strong>
       <div>${a.message}</div>
-      <div>${a.at}${a.requiresUpdate ? " · richiede AGGIORNAMENTO" : ""}</div>
+      <div>${a.at}${a.requiresUpdate ? " · UPDATERISCHIO / KEYWORD" : ""}</div>
       ${a.requiresUpdate && !a.acknowledged ? `<button data-ack="${a.id}" type="button">Ack</button>` : ""}
+    </div>
+  `);
+
+  renderList(els.closed, state.closedTrades?.slice(0, 12), (t) => `
+    <div class="item">
+      <strong>$${t.position.symbol} · ${t.pnlPct >= 0 ? "+" : ""}${t.pnlPct.toFixed(1)}%</strong>
+      Sell ${t.sellPriceUsd} · PnL ${t.pnlSol.toFixed(4)} SOL · risk in ${t.position.riskPct ?? "?"}%
     </div>
   `);
 
   renderList(els.rejects, state.rejectedTrades?.slice(0, 12), (r) => `
     <div class="item">
       <strong>$${r.candidate.symbol} · ${r.label}</strong>
-      <div>Safety ${r.assessment.safetyScore} / Confidence ${r.assessment.confidenceScore}</div>
-      <div>${r.motivation}</div>
+      <div>Risk ${r.assessment?.risk?.riskPct ?? "?"}% · ${r.motivation}</div>
     </div>
-  `);
-
-  renderList(els.instructions, state.liveInstructions?.slice(0, 12), (i) => `
-    <div class="item"><strong>Istruzione</strong><div>${i}</div></div>
   `);
 
   els.alerts.querySelectorAll("[data-ack]").forEach((btn) => {
@@ -118,6 +126,17 @@ els.budgetBtn.addEventListener("click", async () => {
   await api("/api/budget", {
     method: "POST",
     body: JSON.stringify({ amountSol: Number(els.budgetInput.value) }),
+  });
+  await refresh();
+});
+
+els.riskBtn.addEventListener("click", async () => {
+  await api("/api/risk", {
+    method: "POST",
+    body: JSON.stringify({
+      tolerance: els.riskTolerance.value,
+      maxRiskPct: Number(els.maxRiskInput.value),
+    }),
   });
   await refresh();
 });

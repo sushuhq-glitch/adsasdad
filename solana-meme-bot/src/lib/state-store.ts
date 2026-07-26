@@ -1,11 +1,16 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { BotRuntimeState } from "../types/index.js";
+import type { BotRuntimeState, RiskTolerance } from "../types/index.js";
 import { nowIso } from "./money.js";
 
 const DEFAULT_STATE_PATH = path.resolve("data/runtime-state.json");
 
-export function createInitialState(budgetSol: number, tradingMode: "paper" | "live"): BotRuntimeState {
+export function createInitialState(
+  budgetSol: number,
+  tradingMode: "paper" | "live",
+  riskTolerance: RiskTolerance = "all",
+  maxRiskPct = 85,
+): BotRuntimeState {
   return {
     status: "stopped",
     startedAt: null,
@@ -20,6 +25,9 @@ export function createInitialState(budgetSol: number, tradingMode: "paper" | "li
     rejectedTrades: [],
     alerts: [],
     liveInstructions: [],
+    riskTolerance,
+    maxRiskPct,
+    averageOpenRiskPct: 0,
   };
 }
 

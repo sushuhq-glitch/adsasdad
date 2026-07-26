@@ -1,8 +1,19 @@
 export type TradingMode = "paper" | "live";
-export type ExecutionVenue = "axiom" | "anthem" | "pumpfun" | "paper";
+export type ExecutionVenue = "axiom" | "anthem" | "fomo" | "pumpfun" | "paper";
 export type BotStatus = "running" | "paused" | "stopped" | "error" | "awaiting_update";
 export type AlertSeverity = "info" | "warning" | "critical";
 export type TradeDecision = "buy" | "reject" | "hold" | "sell";
+
+/** Tolleranza rischio runtime (Telegram / config). */
+export type RiskTolerance =
+  | "all"
+  | "only_low"
+  | "only_medium"
+  | "only_high"
+  | "low_medium"
+  | "medium_high";
+
+export type RiskBand = "low" | "medium" | "high";
 
 export interface RiskFlags {
   rugPullRisk: boolean;
@@ -31,6 +42,52 @@ export interface TokenCandidate {
   raw?: Record<string, unknown>;
 }
 
+export interface VolumeAnalysis {
+  volumeProfileScore: number;
+  spikeAnomaly: boolean;
+  spikeStrength: number;
+  volumeToLiquidity: number;
+  notes: string[];
+}
+
+export interface SmartMoneyAnalysis {
+  smartWalletInflows: number;
+  developerActivityScore: number;
+  topTraderOverlap: number;
+  score: number;
+  notes: string[];
+}
+
+export interface LiquidityGrowthAnalysis {
+  mcapLiquidityRatio: number;
+  liquidityStabilityScore: number;
+  mcapVelocityScore: number;
+  notes: string[];
+}
+
+export interface TechnicalBundle {
+  volume: VolumeAnalysis;
+  smartMoney: SmartMoneyAnalysis;
+  liquidity: LiquidityGrowthAnalysis;
+  profitPotentialScore: number;
+  moonshot: boolean;
+  strategicReasons: string[];
+}
+
+export interface RiskAssessment {
+  /** Percentuale rischio esplicita 0-100 (es. 15 / 45 / 80). */
+  riskPct: number;
+  band: RiskBand;
+  bandLabel: string;
+  contractSafetyScore: number;
+  holderConcentrationPct: number;
+  liquidityStabilityScore: number;
+  flags: RiskFlags;
+  notes: string[];
+  hardBlock: boolean;
+  hardBlockReason?: string;
+}
+
 export interface SafetyAssessment {
   safetyScore: number;
   confidenceScore: number;
@@ -38,6 +95,8 @@ export interface SafetyAssessment {
   reasons: string[];
   blockers: string[];
   passedZeroDoubt: boolean;
+  risk: RiskAssessment;
+  technical: TechnicalBundle;
 }
 
 export interface DecisionResult {
@@ -47,6 +106,7 @@ export interface DecisionResult {
   motivation: string;
   amountSol?: number;
   rejectedAs?: string;
+  highProfitPotential?: boolean;
 }
 
 export interface Position {
@@ -66,6 +126,9 @@ export interface Position {
   trailingStopPct: number;
   peakPriceUsd: number;
   status: "open" | "closed";
+  riskPct: number;
+  riskBand: RiskBand;
+  highProfitPotential: boolean;
 }
 
 export interface ClosedTrade {
@@ -82,7 +145,7 @@ export interface RejectedTrade {
   at: string;
   candidate: TokenCandidate;
   assessment: SafetyAssessment;
-  label: "Trade Rifiutato - Rischio Rilevato";
+  label: string;
   motivation: string;
 }
 
@@ -112,6 +175,9 @@ export interface BotRuntimeState {
   alerts: SystemAlert[];
   liveInstructions: string[];
   pauseReason?: string;
+  riskTolerance: RiskTolerance;
+  maxRiskPct: number;
+  averageOpenRiskPct: number;
 }
 
 export interface OrderRequest {

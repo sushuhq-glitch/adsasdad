@@ -1,8 +1,8 @@
-# Solana Meme Bot
+# Solana Max Profit Meme Bot
 
-Progetto: bot H24 prudente per meme coin su Solana (Axiom / Anthem / Pump.fun).
+Bot H24 ad alto rendimento per meme coin su Solana (Axiom / Anthem / Fomo / Pump.fun).
 
-Documentazione: [`solana-meme-bot/README.md`](./solana-meme-bot/README.md)
+Docs: [`solana-meme-bot/README.md`](./solana-meme-bot/README.md)
 
 ```bash
 cd solana-meme-bot

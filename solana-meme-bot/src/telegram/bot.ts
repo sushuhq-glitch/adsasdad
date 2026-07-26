@@ -101,6 +101,9 @@ export class TelegramService {
     pnl: number;
     open: number;
     mode: string;
+    riskTolerance: string;
+    maxRiskPct: number;
+    avgRisk: number;
   }): Promise<void> {
     await this.send(undefined, formatStatus(params));
   }

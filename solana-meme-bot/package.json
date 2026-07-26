@@ -1,7 +1,7 @@
 {
   "name": "solana-meme-bot",
   "version": "1.0.0",
-  "description": "Bot H24 prudente per trading meme coin su Solana (Axiom / Anthem / Pump.fun) con motore Zero Dubbi, Telegram e Dashboard",
+  "description": "Bot H24 Max Profit per meme coin su Solana (Axiom / Anthem / Fomo / Pump.fun) con risk %, smart money, Telegram e Dashboard",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

@@ -1,5 +1,5 @@
 import type { AppConfig } from "../config/schema.js";
-import type { ClosedTrade, Position, TokenCandidate } from "../types/index.js";
+import type { ClosedTrade, Position, RiskBand, TokenCandidate } from "../types/index.js";
 import { nowIso, pctChange, uid } from "../lib/money.js";
 import type { ExecutionRouter } from "./venue-adapter.js";
 
@@ -24,7 +24,15 @@ export class PositionManager {
     tokenAmount: number,
     venue: Position["venue"],
     motivation: string,
+    opts: {
+      riskPct: number;
+      riskBand: RiskBand;
+      highProfitPotential: boolean;
+    },
   ): Position {
+    const takeProfitPct = opts.highProfitPotential
+      ? this.config.MOONSHOT_TAKE_PROFIT_PCT
+      : this.config.TAKE_PROFIT_PCT;
     return {
       id: uid("pos"),
       mint: candidate.mint,
@@ -37,11 +45,14 @@ export class PositionManager {
       marketCapAtEntry: candidate.marketCapUsd,
       openedAt: nowIso(),
       motivation,
-      takeProfitPct: this.config.TAKE_PROFIT_PCT,
+      takeProfitPct,
       stopLossPct: this.config.STOP_LOSS_PCT,
       trailingStopPct: this.config.TRAILING_STOP_PCT,
       peakPriceUsd: fillPrice,
       status: "open",
+      riskPct: opts.riskPct,
+      riskBand: opts.riskBand,
+      highProfitPotential: opts.highProfitPotential,
     };
   }
 

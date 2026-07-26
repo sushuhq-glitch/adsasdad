@@ -1,11 +1,31 @@
+import type { RiskTolerance } from "../types/index.js";
+
 export type TelegramCommand =
   | { type: "pause"; reason?: string }
   | { type: "resume" }
   | { type: "status" }
   | { type: "budget"; amountSol: number }
   | { type: "update"; instruction: string }
+  | { type: "risk_tolerance"; tolerance: RiskTolerance }
+  | { type: "risk_max"; maxRiskPct: number }
   | { type: "help" }
   | { type: "unknown"; raw: string };
+
+const TOLERANCE_ALIASES: Record<string, RiskTolerance> = {
+  all: "all",
+  only_low: "only_low",
+  low: "only_low",
+  "solo-low": "only_low",
+  "solo_low": "only_low",
+  only_medium: "only_medium",
+  medium: "only_medium",
+  only_high: "only_high",
+  high: "only_high",
+  "solo-high": "only_high",
+  "solo_high": "only_high",
+  low_medium: "low_medium",
+  medium_high: "medium_high",
+};
 
 export function parseTelegramCommand(text: string): TelegramCommand {
   const raw = text.trim();
@@ -19,24 +39,36 @@ export function parseTelegramCommand(text: string): TelegramCommand {
   if (c === "/help" || c === "help") return { type: "help" };
   if (c === "/budget" || c === "budget") {
     const amountSol = Number(body);
-    if (!Number.isFinite(amountSol) || amountSol <= 0) {
-      return { type: "unknown", raw };
-    }
+    if (!Number.isFinite(amountSol) || amountSol <= 0) return { type: "unknown", raw };
     return { type: "budget", amountSol };
   }
   if (c === "/update" || c === "update") {
     if (!body) return { type: "unknown", raw };
     return { type: "update", instruction: body };
   }
+  if (c === "/risk" || c === "risk") {
+    const [a, b] = body.toLowerCase().split(/\s+/);
+    if (a === "max" && b) {
+      const maxRiskPct = Number(b);
+      if (!Number.isFinite(maxRiskPct)) return { type: "unknown", raw };
+      return { type: "risk_max", maxRiskPct };
+    }
+    const key = (a ?? "").replaceAll("-", "_");
+    const tolerance = TOLERANCE_ALIASES[key];
+    if (tolerance) return { type: "risk_tolerance", tolerance };
+    return { type: "unknown", raw };
+  }
   return { type: "unknown", raw };
 }
 
 export const HELP_TEXT = [
   "Comandi disponibili:",
-  "/status — stato bot, budget, PnL",
-  "/pause [motivo] — mette in pausa gli acquisti",
-  "/resume — riprende il ciclo H24",
-  "/budget <SOL> — aggiorna budget operativo",
-  "/update <istruzione> — nuova istruzione live al motore",
+  "/status — stato, PnL, rischio medio",
+  "/pause [motivo] — pausa acquisti",
+  "/resume — riprende H24",
+  "/budget <SOL> — aggiorna budget",
+  "/risk only_low | only_medium | only_high | all | low_medium | medium_high",
+  "/risk max <%> — soglia rischio massima (es. /risk max 70)",
+  "/update <istruzione> — istruzione live / keyword",
   "/help — questo messaggio",
 ].join("\n");

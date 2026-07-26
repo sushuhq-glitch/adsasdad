@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Solana Meme Bot — Dashboard</title>
+    <title>Solana Max Profit Bot — Dashboard</title>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -17,9 +17,9 @@
     <main class="shell">
       <header class="top">
         <div>
-          <p class="brand">SOLANA MEME BOT</p>
+          <p class="brand">SOLANA MAX PROFIT BOT</p>
           <h1>Control Room H24</h1>
-          <p class="sub">Motore Zero Dubbi · Telegram sync · Paper-first</p>
+          <p class="sub">Volume · Smart Money · Risk % · Moonshot · Telegram sync</p>
         </div>
         <div class="auth">
           <label>
@@ -36,7 +36,7 @@
           <strong id="botStatus">—</strong>
         </article>
         <article>
-          <span>PnL totale</span>
+          <span>PnL cumulativo</span>
           <strong id="pnl">—</strong>
         </article>
         <article>
@@ -44,8 +44,8 @@
           <strong id="residual">—</strong>
         </article>
         <article>
-          <span>Posizioni aperte</span>
-          <strong id="openCount">—</strong>
+          <span>Rischio medio open</span>
+          <strong id="avgRisk">—</strong>
         </article>
       </section>
 
@@ -57,25 +57,41 @@
           <input id="budgetInput" type="number" min="0.01" step="0.01" />
           <button id="budgetBtn" type="button">Aggiorna</button>
         </label>
+        <label class="inline">
+          Risk mode
+          <select id="riskTolerance">
+            <option value="all">All</option>
+            <option value="only_low">Solo Low Risk</option>
+            <option value="only_medium">Solo Medium</option>
+            <option value="only_high">Solo High Risk</option>
+            <option value="low_medium">Low + Medium</option>
+            <option value="medium_high">Medium + High</option>
+          </select>
+        </label>
+        <label class="inline">
+          Max risk %
+          <input id="maxRiskInput" type="number" min="5" max="95" step="1" />
+          <button id="riskBtn" type="button">Applica rischio</button>
+        </label>
       </section>
 
       <section class="grid">
         <div class="panel">
-          <h2>Posizioni aperte</h2>
+          <h2>Trade attivi</h2>
           <div id="positions" class="list empty">Nessuna posizione</div>
         </div>
         <div class="panel warn">
           <h2>AVVISI & AGGIORNAMENTI RICHIESTI</h2>
-          <p class="hint">Sincronizzato con le notifiche Telegram prioritarie</p>
+          <p class="hint">Sincronizzato con Telegram — usa /risk max &lt;%&gt; per regolare</p>
           <div id="alerts" class="list empty">Nessun avviso</div>
         </div>
         <div class="panel">
-          <h2>Trade rifiutati (Zero Dubbi)</h2>
-          <div id="rejects" class="list empty">—</div>
+          <h2>Storico chiusure / PnL</h2>
+          <div id="closed" class="list empty">—</div>
         </div>
         <div class="panel">
-          <h2>Istruzioni live</h2>
-          <div id="instructions" class="list empty">Nessuna istruzione</div>
+          <h2>Rifiuti strategici</h2>
+          <div id="rejects" class="list empty">—</div>
         </div>
       </section>
     </main>

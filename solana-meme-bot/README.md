@@ -1,24 +1,33 @@
-# Solana Meme Bot H24 (Zero Dubbi)
+# Solana Meme Bot H24 — Max Profit Strategy
 
-Bot di automazione **prudente** per meme coin su Solana (Axiom / Anthem / Pump.fun), TypeScript/Node.js, con motore ad alta confidenza, dashboard web e Telegram.
+Bot TypeScript/Node.js ad alto rendimento per meme coin su **Solana** (Axiom / Anthem / Fomo / Pump.fun), con analisi tecnica avanzata, risk % esplicita, dashboard e Telegram.
 
-> **Default sicuro:** `TRADING_MODE=paper` + `DRY_RUN=true`. Nessun ordine reale finché non configuri le API venue e disattivi dry-run.
+> Default sicuro: `TRADING_MODE=paper` + `DRY_RUN=true`.
+
+## Strategia
+
+- **Volume Profile / Spike Anomaly** — rileva accelerazioni di volume
+- **Smart Money Tracking** — stima inflow wallet top trader / early wallets
+- **Mcap/Liquidity ratio + velocity** — crescita market cap vs liquidità
+- **Sentiment H24** — DexScreener + narrative TikTok/YouTube
+- **Moonshot / High Yield** — il bot può entrare anche ad alto rischio se il profit potential è alto e la tolleranza lo consente
+- **Risk % esplicita** per trade (ancore tipiche: Low **15%**, Medium **45%**, High **80%**)
 
 ## Moduli
 
 ```
 src/
-├── config/          # .env schema (wallet, API Axiom/Anthem/Pump.fun, Telegram, soglie)
-├── telegram/        # messaggi HTML, polling/webhook comandi
-├── security/        # anti-rug, contract analysis, filtro Zero Dubbi
-├── scrapers/        # DexScreener, Pump.fun, YouTube/TikTok narrative
-├── trader/          # wallet Solana, buy/sell, TP/SL/trailing, slippage
-├── ui/              # Dashboard web + API
-├── lib/             # logger, state store, alert bus
-└── index.ts         # Controller H24 + gestione eccezioni
+├── config/           # wallet, API keys, budget, RISK_TOLERANCE, MAX_RISK_PCT
+├── analysis/         # volume, smart money, liquidity growth, Max Profit engine
+├── security/         # contract checks + risk scorer (%)
+├── scrapers/         # DexScreener, Pump.fun, social/narrative
+├── trader/           # wallet, venues (axiom/anthem/fomo/pumpfun), TP/SL/trailing
+├── telegram/         # report con risk% + comandi
+├── ui/               # dashboard H24
+└── index.ts          # controller asincrono continuo
 ```
 
-## Setup
+## Installazione
 
 ```bash
 cd solana-meme-bot
@@ -27,45 +36,37 @@ npm install
 npm run dev
 ```
 
-Dashboard: `http://localhost:3847` (token = `DASHBOARD_AUTH_TOKEN`).
-
-## Zero Dubbi
-
-- Buy **solo** se `safetyScore` e `confidenceScore` ≥ soglia (default **90**).
-- Qualsiasi dubbio (rug, liquidità, volumi non organici, social contrastanti, mint/freeze, concentrazione) → sospende e registra **Trade Rifiutato - Rischio Rilevato**.
+Dashboard: `http://localhost:3847` (token `DASHBOARD_AUTH_TOKEN`).
 
 ## Telegram
-
-Notifiche su buy/sell/PnL/stop-loss + alert sistema prioritari.
 
 ```
 /status
 /pause [motivo]
 /resume
 /budget 1.5
-/update Nuovo endpoint Axiom: https://...
-/help
+/risk only_low | only_high | all | low_medium | medium_high
+/risk max 70
+/update Nuova keyword: frog meme
 ```
 
-Esempio messaggio:
+### Formato report
 
 ```
-🚀 NUOVA OPERAZIONE ESEGUITA
+🚀 NUOVA OPERAZIONE ESEGUITA (HIGH PROFIT POTENTIAL)
 • Token: $EXAMPLE (Solana)
-• Market Cap: $150,000
+• Market Cap: $120,000
 • Importo Investito: 0.5 SOL
-• Entry Price: $0.00045
-• Motivazione: Viralità TikTok (+250% menzioni) + Audit contratto superato.
+• Prezzo d'Ingresso (Entry Price): $0.00045
+• 🔥 LIVELLO DI RISCHIO TRADE: 65% (Rischio Medio-Alto)
+• Motivazione Strategica: Accumulo Smart Wallet + Trend TikTok (+320%)
+
+📈 AGGIORNAMENTO CHIUSURA POSIZIONE / PnL
+• Prezzo di Uscita (Sell Price): $0.00135
+• Take Profit Raggiunto: +200%
+• Profit/Loss Netto: +1.0 SOL (+$180.00 USD)
 ```
-
-## Live checklist
-
-1. RPC affidabile + wallet con fondi limitati  
-2. API key/base URL Axiom o Anthem (Pump.fun via adapter dedicato)  
-3. Test paper completo  
-4. `TRADING_MODE=live` e solo dopo `DRY_RUN=false`  
-5. Mantieni soglie ≥ 90 e `ZERO_DOUBT_MODE=true`
 
 ## Disclaimer
 
-Software di ricerca/automazione. Il trading meme coin è ad altissimo rischio. Adatta gli adapter alle API ufficiali prima di qualsiasi uso live. Non è consulenza finanziaria.
+Trading meme coin = rischio estremo di perdita. Gli adapter venue sono generici: collega le API ufficiali prima del live. Non è consulenza finanziaria.
