@@ -3,6 +3,7 @@ dist/
 .env
 data/runtime-state.json
 data/telegram-chat.json
+data/tracked-wallets.json
 data/*.tmp
 *.log
 .DS_Store

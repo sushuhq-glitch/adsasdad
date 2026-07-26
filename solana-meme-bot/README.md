@@ -1,72 +1,71 @@
-# Solana Meme Bot H24 — Max Profit Strategy
+# Solana Mirror Bot H24 — FOMO Top 50 PnL Copy Trading
 
-Bot TypeScript/Node.js ad alto rendimento per meme coin su **Solana** (Axiom / Anthem / Fomo / Pump.fun), con analisi tecnica avanzata, risk % esplicita, dashboard e Telegram.
+Bot TypeScript/Node.js per **Mirror Trading / Wallet Copying** su Solana: analizza i **Top 50 PnL FOMO** e compra/vende **quando lo fanno loro**.
 
-> Default sicuro: `TRADING_MODE=paper` + `DRY_RUN=true`.
+> Default: `TRADING_MODE=paper` + `DRY_RUN=true` + `PREFERRED_EXECUTION_VENUE=fomo`.
 
-## Strategia
+## Come funziona
 
-- **Volume Profile / Spike Anomaly** — rileva accelerazioni di volume
-- **Smart Money Tracking** — stima inflow wallet top trader / early wallets
-- **Mcap/Liquidity ratio + velocity** — crescita market cap vs liquidità
-- **Sentiment H24** — DexScreener + narrative TikTok/YouTube
-- **Moonshot / High Yield** — il bot può entrare anche ad alto rischio se il profit potential è alto e la tolleranza lo consente
-- **Risk % esplicita** per trade (ancore tipiche: Low **15%**, Medium **45%**, High **80%**)
+1. Scarica/aggiorna la **Top 50 PnL** da FOMO (fallback Solana Tracker / seed)
+2. Ascolta i wallet via **WebSocket `logsSubscribe` + polling** firme
+3. **COPY BUY** immediato quando un target compra un token
+4. **COPY SELL** immediato quando il target vende (parziale o totale) — **non aspetta TP/SL**
+5. Mantiene **TP/SL di emergenza** se il wallet non vende / rug
+6. Notifica Telegram + dashboard con risk %, wallet copiato, PnL
 
 ## Moduli
 
 ```
 src/
-├── config/           # wallet, API keys, budget, RISK_TOLERANCE, MAX_RISK_PCT
-├── analysis/         # volume, smart money, liquidity growth, Max Profit engine
-├── security/         # contract checks + risk scorer (%)
-├── scrapers/         # DexScreener, Pump.fun, social/narrative
-├── trader/           # wallet, venues (axiom/anthem/fomo/pumpfun), TP/SL/trailing
-├── telegram/         # report con risk% + comandi
-├── ui/               # dashboard H24
-└── index.ts          # controller asincrono continuo
+├── config/          # RPC/WS, FOMO keys, budget, lista seed
+├── copy/            # FOMO leaderboard, watcher WS, decoder, mirror engine
+├── security/        # risk scorer (anche per copy)
+├── trader/          # esecuzione Fomo/Axiom/Anthem/Pump.fun
+├── telegram/        # report COPY BUY/SELL + comandi wallet
+├── ui/              # dashboard H24
+└── index.ts         # controller + auto-riconnessione
 ```
 
-## Installazione
+## Install
 
 ```bash
 cd solana-meme-bot
 cp .env.example .env
+# TELEGRAM_BOT_TOKEN, opz. FOMO_API_KEY, SOLANA_WS_URL (Helius)
 npm install
-npm run dev
+npm run bot
 ```
 
-Dashboard: `http://localhost:3847` (token `DASHBOARD_AUTH_TOKEN`).
+Telegram: apri `@WEDOTHATBOT` → `/start`
 
-## Telegram
+### Comandi utili
 
 ```
-/status
-/pause [motivo]
-/resume
-/budget 1.5
-/risk only_low | only_high | all | low_medium | medium_high
+/wallets list
+/wallets refresh          # ricarica Top 50 FOMO PnL
+/wallets add <address> [label]
+/wallets remove <address>
+/pause · /resume · /budget 1.5
 /risk max 70
-/update Nuova keyword: frog meme
 ```
 
-### Formato report
+### Report Telegram
 
 ```
-🚀 NUOVA OPERAZIONE ESEGUITA (HIGH PROFIT POTENTIAL)
-• Token: $EXAMPLE (Solana)
-• Market Cap: $120,000
-• Importo Investito: 0.5 SOL
-• Prezzo d'Ingresso (Entry Price): $0.00045
-• 🔥 LIVELLO DI RISCHIO TRADE: 65% (Rischio Medio-Alto)
-• Motivazione Strategica: Accumulo Smart Wallet + Trend TikTok (+320%)
+🚀 ACQUISTO AUTOMATICO ESEGUITO (COPY BUY)
+• Token: $EXAMPLE · Market Cap · Wallet Copiato · Risk % · in ascolto vendita...
 
-📈 AGGIORNAMENTO CHIUSURA POSIZIONE / PnL
-• Prezzo di Uscita (Sell Price): $0.00135
-• Take Profit Raggiunto: +200%
-• Profit/Loss Netto: +1.0 SOL (+$180.00 USD)
+⚡ VENDITA IMMEDIATA ESEGUITA (COPY SELL)
+• Sell Price · Motivo: vendita wallet copiato · PnL SOL/USD
 ```
+
+## Produzione (latenza)
+
+- Usa RPC/WS dedicati (`SOLANA_WS_URL`, Helius/Triton)
+- Imposta `FOMO_API_KEY` se disponibile
+- Opzionale `SOLANA_TRACKER_API_KEY` come fallback leaderboard
+- `DRY_RUN=false` e `TRADING_MODE=live` solo dopo test paper
 
 ## Disclaimer
 
-Trading meme coin = rischio estremo di perdita. Gli adapter venue sono generici: collega le API ufficiali prima del live. Non è consulenza finanziaria.
+Copy trading meme coin è ad altissimo rischio. Non è consulenza finanziaria.

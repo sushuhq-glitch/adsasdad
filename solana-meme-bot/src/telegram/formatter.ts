@@ -22,13 +22,17 @@ export function formatBuyMessage(decision: DecisionResult, position: Position): 
 }
 
 export function formatSellMessage(trade: ClosedTrade): string {
+  if (trade.reason === "copy_sell") {
+    return formatCopySellMessage(trade);
+  }
   const sign = trade.pnlSol >= 0 ? "📈" : "📉";
   const reasonLabel: Record<ClosedTrade["reason"], string> = {
-    take_profit: "Take Profit Raggiunto",
-    stop_loss: "Stop Loss scattato",
+    take_profit: "Take Profit di emergenza",
+    stop_loss: "Stop Loss di emergenza",
     trailing_stop: "Trailing Stop",
     manual: "Vendita manuale",
     risk_exit: "Uscita per rischio",
+    copy_sell: "Copy sell",
   };
   return [
     `${sign} <b>AGGIORNAMENTO CHIUSURA POSIZIONE / PnL</b>`,
@@ -38,6 +42,44 @@ export function formatSellMessage(trade: ClosedTrade): string {
     `• Rischio Trade in ingresso: ${trade.position.riskPct}%`,
     `• Profit/Loss Netto: ${fmtSol(trade.pnlSol)} (${trade.pnlUsd >= 0 ? "+" : "-"}${fmtUsd(Math.abs(trade.pnlUsd))})`,
   ].join("\n");
+}
+
+export function formatCopyBuyMessage(params: {
+  symbol: string;
+  name: string;
+  marketCapUsd: number;
+  amountSol: number;
+  entryPriceUsd: number;
+  riskPct: number;
+  riskLabel: string;
+  walletLabel: string;
+  walletAddress: string;
+}): string {
+  const short = `${params.walletAddress.slice(0, 4)}…${params.walletAddress.slice(-4)}`;
+  return [
+    "🚀 <b>ACQUISTO AUTOMATICO ESEGUITO (COPY BUY)</b>",
+    `• Token: $${params.symbol} (Solana)`,
+    `• Nome: ${params.name}`,
+    `• Market Cap: ${fmtUsd(params.marketCapUsd, 0)}`,
+    `• Wallet Copiato: ${escapeHtml(params.walletLabel)} (#${short})`,
+    `• Importo Investito: ${params.amountSol.toFixed(4)} SOL | Entry Price: ${fmtUsd(params.entryPriceUsd, 6)}`,
+    `• 🔥 LIVELLO DI RISCHIO TRADE: ${params.riskPct}% (${escapeHtml(params.riskLabel)})`,
+    "• Stato: Posizione aperta in ascolto vendita wallet...",
+  ].join("\n");
+}
+
+export function formatCopySellMessage(trade: ClosedTrade): string {
+  const wallet = trade.position.copyFromLabel || "Wallet tracciato";
+  return [
+    "⚡ <b>VENDITA IMMEDIATA ESEGUITA (COPY SELL)</b>",
+    `• Token: $${trade.position.symbol} (Solana)`,
+    `• Prezzo di Uscita (Sell Price): ${fmtUsd(trade.sellPriceUsd, 6)}`,
+    `• Motivo Uscita: 🚨 Rilevata vendita istantanea dal Wallet Copiato (${escapeHtml(wallet)}) — Nessuna attesa.`,
+    `• Profit/Loss Netto: ${fmtSol(trade.pnlSol)} (${trade.pnlUsd >= 0 ? "+" : "-"}${fmtUsd(Math.abs(trade.pnlUsd))}) [${trade.pnlPct >= 0 ? "+" : ""}${trade.pnlPct.toFixed(0)}%]`,
+    trade.copyLatencyNote ? `• ${escapeHtml(trade.copyLatencyNote)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function formatRejectMessage(decision: DecisionResult): string {

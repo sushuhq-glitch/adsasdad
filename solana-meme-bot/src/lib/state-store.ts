@@ -10,6 +10,7 @@ export function createInitialState(
   tradingMode: "paper" | "live",
   riskTolerance: RiskTolerance = "all",
   maxRiskPct = 85,
+  copyTradingEnabled = true,
 ): BotRuntimeState {
   return {
     status: "stopped",
@@ -28,6 +29,11 @@ export function createInitialState(
     riskTolerance,
     maxRiskPct,
     averageOpenRiskPct: 0,
+    copyTradingEnabled,
+    trackedWallets: [],
+    lastMirrorAt: null,
+    mirrorBuys: 0,
+    mirrorSells: 0,
   };
 }
 

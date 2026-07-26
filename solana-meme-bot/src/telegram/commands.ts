@@ -9,6 +9,10 @@ export type TelegramCommand =
   | { type: "update"; instruction: string }
   | { type: "risk_tolerance"; tolerance: RiskTolerance }
   | { type: "risk_max"; maxRiskPct: number }
+  | { type: "wallet_add"; address: string; label?: string }
+  | { type: "wallet_remove"; address: string }
+  | { type: "wallet_list" }
+  | { type: "wallet_refresh" }
   | { type: "help" }
   | { type: "start" }
   | { type: "unknown"; raw: string };
@@ -52,6 +56,22 @@ export function parseTelegramCommand(text: string): TelegramCommand {
     if (!body) return { type: "unknown", raw };
     return { type: "update", instruction: body };
   }
+  if (c === "/wallets" || c === "wallets" || c === "/wallet" || c === "wallet") {
+    const [a, b, ...more] = body.split(/\s+/);
+    if (!a || a === "list") return { type: "wallet_list" };
+    if (a === "refresh") return { type: "wallet_refresh" };
+    if (a === "add" && b) {
+      return { type: "wallet_add", address: b, label: more.join(" ") || undefined };
+    }
+    if ((a === "remove" || a === "del" || a === "rm") && b) {
+      return { type: "wallet_remove", address: b };
+    }
+    // /wallet <address> [label] → add
+    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a)) {
+      return { type: "wallet_add", address: a, label: [b, ...more].filter(Boolean).join(" ") || undefined };
+    }
+    return { type: "unknown", raw };
+  }
   if (c === "/risk" || c === "risk") {
     const [a, b] = body.toLowerCase().split(/\s+/);
     if (a === "max" && b) {
@@ -68,13 +88,13 @@ export function parseTelegramCommand(text: string): TelegramCommand {
 }
 
 export const HELP_TEXT = [
-  "📟 <b>Comandi Dashboard Telegram</b>",
-  "/start o /dashboard — apre il pannello con pulsanti",
-  "/status — stato rapido",
-  "/pause [motivo] · /resume",
-  "/budget &lt;SOL&gt;",
-  "/risk only_low | only_high | all",
-  "/risk max &lt;%&gt;",
-  "/update &lt;istruzione&gt;",
+  "📟 <b>Mirror Trading / FOMO Top PnL</b>",
+  "/start o /dashboard — pannello",
+  "/wallets list — top wallet tracciati",
+  "/wallets add &lt;address&gt; [label]",
+  "/wallets remove &lt;address&gt;",
+  "/wallets refresh — ricarica Top 50 FOMO PnL",
+  "/pause · /resume · /budget &lt;SOL&gt;",
+  "/risk only_high | all · /risk max 70",
   "/help",
 ].join("\n");

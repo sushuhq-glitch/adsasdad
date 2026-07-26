@@ -7,7 +7,7 @@ const els = {
   avgRisk: document.getElementById("avgRisk"),
   positions: document.getElementById("positions"),
   alerts: document.getElementById("alerts"),
-  rejects: document.getElementById("rejects"),
+  wallets: document.getElementById("wallets"),
   closed: document.getElementById("closed"),
   pauseBtn: document.getElementById("pauseBtn"),
   resumeBtn: document.getElementById("resumeBtn"),
@@ -61,7 +61,8 @@ function render(state) {
     <div class="item">
       <strong>$${p.symbol} · ${p.amountSol.toFixed(4)} SOL · Risk ${p.riskPct ?? "?"}%</strong>
       Entry ${p.entryPriceUsd} · MC ${Math.round(p.marketCapAtEntry)} · TP ${p.takeProfitPct}%
-      ${p.highProfitPotential ? '<span class="badge">MOONSHOT</span>' : ""}
+      ${p.copyFromLabel ? `<span class="badge">COPY ${p.copyFromLabel}</span>` : ""}
+      ${p.listeningForCopySell ? '<span class="badge warn">LISTEN SELL</span>' : ""}
       <div>${p.motivation}</div>
     </div>
   `);
@@ -86,10 +87,10 @@ function render(state) {
     </div>
   `);
 
-  renderList(els.rejects, state.rejectedTrades?.slice(0, 12), (r) => `
+  renderList(els.wallets, state.trackedWallets?.slice(0, 30), (w) => `
     <div class="item">
-      <strong>$${r.candidate.symbol} · ${r.label}</strong>
-      <div>Risk ${r.assessment?.risk?.riskPct ?? "?"}% · ${r.motivation}</div>
+      <strong>${w.enabled ? "🟢" : "⚪"} ${w.label} · #${w.rank ?? "?"}</strong>
+      <div>${w.address.slice(0, 4)}…${w.address.slice(-4)} · rel ${w.reliabilityScore}${w.realizedPnlUsd != null ? ` · PnL $${Math.round(w.realizedPnlUsd)}` : ""} · ${w.source}</div>
     </div>
   `);
 

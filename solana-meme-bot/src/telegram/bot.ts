@@ -11,15 +11,19 @@ import {
   formatClosedPanel,
   formatDashboard,
   formatPositionsPanel,
+  formatWalletsPanel,
   type DashAction,
 } from "./dashboard.js";
 import {
   formatBuyMessage,
+  formatCopyBuyMessage,
   formatRejectMessage,
   formatSellMessage,
   formatStatus,
   formatSystemAlert,
 } from "./formatter.js";
+import type { CopyRiskProfile, MirrorSignal } from "../copy/types.js";
+import type { TokenCandidate } from "../types/index.js";
 
 export type CommandHandler = (cmd: TelegramCommand, chatId: string) => Promise<string | void>;
 export type StateProvider = () => BotRuntimeState;
@@ -59,7 +63,8 @@ export class TelegramService {
 
     void this.bot.setMyCommands([
       { command: "start", description: "Apri dashboard Telegram" },
-      { command: "dashboard", description: "Pannello controllo H24" },
+      { command: "dashboard", description: "Pannello mirror H24" },
+      { command: "wallets", description: "Lista / add / remove / refresh FOMO top PnL" },
       { command: "status", description: "Stato rapido" },
       { command: "pause", description: "Pausa acquisti" },
       { command: "resume", description: "Riprendi bot" },
@@ -98,8 +103,21 @@ export class TelegramService {
         const reply = await this.handler?.(cmd, chatId);
         if (reply) await this.send(chatId, reply);
         // dopo azioni utili, aggiorna/riapri dashboard
-        if (["pause", "resume", "budget", "risk_tolerance", "risk_max", "status"].includes(cmd.type)) {
-          await this.openDashboard(chatId);
+        if (
+          [
+            "pause",
+            "resume",
+            "budget",
+            "risk_tolerance",
+            "risk_max",
+            "status",
+            "wallet_add",
+            "wallet_remove",
+            "wallet_refresh",
+            "wallet_list",
+          ].includes(cmd.type)
+        ) {
+          if (cmd.type !== "wallet_list") await this.openDashboard(chatId);
         }
       } catch (err) {
         logger.error({ err }, "Errore gestione comando Telegram");
@@ -197,6 +215,9 @@ export class TelegramService {
       case "dash_alerts":
         await this.sendPanel(chatId, formatAlertsPanel(this.requireState()), true);
         return;
+      case "dash_wallets":
+        await this.sendPanel(chatId, formatWalletsPanel(this.requireState()), true);
+        return;
       case "dash_risk_menu":
         await this.openDashboard(chatId, true);
         return;
@@ -283,6 +304,28 @@ export class TelegramService {
 
   async notifyBuy(decision: DecisionResult, position: Position): Promise<void> {
     await this.send(undefined, formatBuyMessage(decision, position));
+  }
+
+  async notifyCopyBuy(
+    position: Position,
+    risk: CopyRiskProfile,
+    signal: MirrorSignal,
+    token: TokenCandidate,
+  ): Promise<void> {
+    await this.send(
+      undefined,
+      formatCopyBuyMessage({
+        symbol: position.symbol,
+        name: position.name || token.name,
+        marketCapUsd: token.marketCapUsd || position.marketCapAtEntry,
+        amountSol: position.amountSol,
+        entryPriceUsd: position.entryPriceUsd,
+        riskPct: risk.riskPct,
+        riskLabel: risk.bandLabel,
+        walletLabel: signal.wallet.label,
+        walletAddress: signal.wallet.address,
+      }),
+    );
   }
 
   async notifySell(trade: ClosedTrade): Promise<void> {

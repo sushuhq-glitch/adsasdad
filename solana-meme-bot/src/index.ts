@@ -3,6 +3,12 @@ import type { Server } from "node:http";
 import { MaxProfitEngine } from "./analysis/max-profit-engine.js";
 import type { AppConfig } from "./config/schema.js";
 import { loadConfig } from "./config/schema.js";
+import { FomoDemoFeed } from "./copy/fomo-demo-feed.js";
+import { FomoLeaderboardClient } from "./copy/fomo-leaderboard.js";
+import { MirrorEngine } from "./copy/mirror-engine.js";
+import { SolanaWalletWatcher } from "./copy/solana-watcher.js";
+import type { MirrorSignal } from "./copy/types.js";
+import { WalletRegistry } from "./copy/wallet-registry.js";
 import { AlertBus } from "./lib/alert-bus.js";
 import { logger } from "./lib/logger.js";
 import { nowIso } from "./lib/money.js";
@@ -10,15 +16,20 @@ import { createInitialState, StateStore } from "./lib/state-store.js";
 import { MarketScanner } from "./scrapers/market-scanner.js";
 import { TelegramService } from "./telegram/bot.js";
 import type { TelegramCommand } from "./telegram/commands.js";
+import { formatWalletsPanel } from "./telegram/dashboard.js";
 import { PositionManager } from "./trader/position-manager.js";
 import { buildExecutionRouter, type ExecutionRouter } from "./trader/venue-adapter.js";
 import { WalletManager } from "./trader/wallet-manager.js";
-import type { BotRuntimeState, DecisionResult, RejectedTrade, RiskTolerance } from "./types/index.js";
+import type {
+  BotRuntimeState,
+  DecisionResult,
+  RejectedTrade,
+  RiskTolerance,
+} from "./types/index.js";
 import { startDashboard } from "./ui/server.js";
 
 /**
- * Controller H24 — Max Profit Strategy:
- * scan → analisi tecnica/social → risk % → buy/sell → Telegram/UI
+ * Controller H24 — Mirror Trading (FOMO Top 50 PnL) + emergency TP/SL.
  */
 export class BotController {
   readonly state: BotRuntimeState;
@@ -29,20 +40,29 @@ export class BotController {
   readonly engine: MaxProfitEngine;
   readonly router: ExecutionRouter;
   readonly positions: PositionManager;
+  readonly registry = new WalletRegistry();
+  private readonly fomo: FomoLeaderboardClient;
+  private watcher: SolanaWalletWatcher | null = null;
+  private demoFeed: FomoDemoFeed | null = null;
+  private mirror: MirrorEngine | null = null;
   private readonly store = new StateStore();
 
   private scanTimer: NodeJS.Timeout | null = null;
   private positionTimer: NodeJS.Timeout | null = null;
   private healthTimer: NodeJS.Timeout | null = null;
+  private leaderboardTimer: NodeJS.Timeout | null = null;
   private running = false;
   private dailyLossSol = 0;
+  private config: AppConfig;
 
-  constructor(private config: AppConfig) {
+  constructor(config: AppConfig) {
+    this.config = config;
     this.state = createInitialState(
       config.BUDGET_SOL,
       config.TRADING_MODE,
       config.RISK_TOLERANCE,
       config.MAX_RISK_PCT,
+      config.COPY_TRADING_ENABLED,
     );
     this.telegram = new TelegramService(config);
     this.wallet = new WalletManager(config);
@@ -50,6 +70,7 @@ export class BotController {
     this.engine = new MaxProfitEngine(config);
     this.router = buildExecutionRouter(config);
     this.positions = new PositionManager(config, this.router);
+    this.fomo = new FomoLeaderboardClient(config);
 
     this.alerts.onAlert(async (alert) => {
       this.state.alerts = this.alerts.list();
@@ -64,6 +85,7 @@ export class BotController {
     Object.assign(this.state, loaded, {
       tradingMode: this.config.TRADING_MODE,
       budgetSol: this.config.BUDGET_SOL,
+      copyTradingEnabled: this.config.COPY_TRADING_ENABLED,
     });
     if (!Number.isFinite(this.state.residualBudgetSol)) {
       this.state.residualBudgetSol = this.config.BUDGET_SOL;
@@ -72,10 +94,39 @@ export class BotController {
     this.state.maxRiskPct = this.state.maxRiskPct ?? this.config.MAX_RISK_PCT;
     this.engine.setRiskTolerance(this.state.riskTolerance);
     this.engine.setMaxRiskPct(this.state.maxRiskPct);
+
+    await this.registry.load();
+    this.syncTrackedView();
+
+    this.mirror = new MirrorEngine(this.config, this.state, this.router, this.positions, {
+      onCopyBuy: async (position, risk, signal, token) => {
+        this.state.mirrorBuys += 1;
+        this.state.lastMirrorAt = nowIso();
+        await this.telegram.notifyCopyBuy(position, risk, signal, token);
+      },
+      onCopySell: async (trade, _signal, latencyNote) => {
+        this.state.mirrorSells += 1;
+        this.state.lastMirrorAt = nowIso();
+        trade.copyLatencyNote = latencyNote;
+        await this.telegram.notifySell(trade);
+        await this.alerts.push({
+          severity: "info",
+          title: "Copy sell replicato",
+          message: latencyNote,
+          requiresUpdate: false,
+          source: "mirror",
+        });
+      },
+      onSkip: async (reason, signal) => {
+        logger.debug({ reason, side: signal.side, mint: signal.mint }, "Mirror skip");
+      },
+      persist: async () => this.persist(),
+    });
+
     this.telegram.start(async (cmd, chatId) => this.handleCommand(cmd, chatId), {
       stateProvider: () => this.getState(),
       modeLabel: () =>
-        `${this.state.tradingMode}${this.config.DRY_RUN ? " dry-run" : ""}${this.state.tradingMode === "paper" ? " 🧪" : ""}`,
+        `COPY/FOMO ${this.state.tradingMode}${this.config.DRY_RUN ? " dry-run" : ""}${this.state.tradingMode === "paper" ? " 🧪" : ""}`,
     });
   }
 
@@ -85,20 +136,35 @@ export class BotController {
     this.state.status = "running";
     this.state.startedAt = this.state.startedAt ?? nowIso();
     await this.persist();
-    logger.info("Controller H24 Max Profit avviato");
+    logger.info("Controller H24 Mirror/FOMO avviato");
+
+    if (this.config.COPY_TRADING_ENABLED) {
+      await this.refreshLeaderboard();
+      const onSignal = async (signal: MirrorSignal) => {
+        try {
+          await this.mirror?.handleSignal(signal);
+        } catch (err) {
+          logger.error({ err }, "Errore mirror signal");
+        }
+      };
+      this.watcher = new SolanaWalletWatcher(this.config, this.registry);
+      await this.watcher.start(onSignal);
+      this.demoFeed = new FomoDemoFeed(this.config, this.registry);
+      this.demoFeed.start(onSignal);
+      this.syncTrackedView();
+      await this.persist();
+      this.leaderboardTimer = setInterval(
+        () => void this.refreshLeaderboard(),
+        this.config.COPY_LEADERBOARD_REFRESH_MS,
+      );
+    }
 
     const tickScan = async () => {
+      if (!this.config.MAX_PROFIT_SCAN_ENABLED) return;
       try {
         await this.scanCycle();
       } catch (err) {
         logger.error({ err }, "Errore scanCycle");
-        await this.alerts.push({
-          severity: "warning",
-          title: "Errore ciclo scan",
-          message: err instanceof Error ? err.message : "scanCycle failed",
-          requiresUpdate: false,
-          source: "controller",
-        });
       }
     };
     const tickPositions = async () => {
@@ -131,12 +197,16 @@ export class BotController {
     if (this.scanTimer) clearInterval(this.scanTimer);
     if (this.positionTimer) clearInterval(this.positionTimer);
     if (this.healthTimer) clearInterval(this.healthTimer);
+    if (this.leaderboardTimer) clearInterval(this.leaderboardTimer);
+    await this.watcher?.stop();
+    this.demoFeed?.stop();
     await this.telegram.stop();
     await this.persist();
   }
 
   getState(): BotRuntimeState {
     this.refreshAverageRisk();
+    this.syncTrackedView();
     return this.state;
   }
 
@@ -182,8 +252,23 @@ export class BotController {
 
   async persist(): Promise<void> {
     this.refreshAverageRisk();
+    this.syncTrackedView();
     this.state.alerts = this.alerts.list();
     await this.store.save(this.state);
+    await this.registry.save();
+  }
+
+  private syncTrackedView(): void {
+    this.state.trackedWallets = this.registry.list().map((w) => ({
+      address: w.address,
+      label: w.label,
+      rank: w.rank,
+      realizedPnlUsd: w.realizedPnlUsd,
+      reliabilityScore: w.reliabilityScore,
+      source: w.source,
+      enabled: w.enabled,
+      lastSeenAt: w.lastSeenAt,
+    }));
   }
 
   private refreshAverageRisk(): void {
@@ -191,6 +276,38 @@ export class BotController {
     this.state.averageOpenRiskPct = open.length
       ? open.reduce((a, p) => a + (p.riskPct ?? 0), 0) / open.length
       : 0;
+  }
+
+  private async refreshLeaderboard(): Promise<void> {
+    try {
+      const top = await this.fomo.fetchTop50();
+      if (!top.length) {
+        const hasReal = this.registry.list().some((w) => !w.label.includes("(DEMO)"));
+        await this.alerts.push({
+          severity: "warning",
+          title: "FOMO Top PnL API non disponibile",
+          message: hasReal
+            ? "Uso wallet già in lista. Puoi aggiungere altri con /wallets add <address>."
+            : "API FOMO non pubblica da questo ambiente. In paper attivo feed DEMO, oppure /wallets add <address> / FOMO_API_KEY.",
+          requiresUpdate: false,
+          source: "fomo",
+        });
+        if (this.state.status === "awaiting_update") this.state.status = "running";
+        if (!this.registry.list().length) {
+          this.registry.upsertMany(await this.fomo.fetchTop50());
+        }
+      } else {
+        this.registry.upsertMany(top, { preserveManual: true });
+      }
+      this.syncTrackedView();
+      await this.registry.save();
+      await this.watcher?.resubscribeAll();
+      this.mirror?.reindex();
+      logger.info({ wallets: this.registry.list(true).length }, "Leaderboard FOMO sincronizzata");
+      await this.persist();
+    } catch (err) {
+      logger.error({ err }, "refreshLeaderboard fallita");
+    }
   }
 
   private canBuy(): boolean {
@@ -206,37 +323,29 @@ export class BotController {
     if (!this.running) return;
     const { candidates, trends } = await this.scanner.scan();
     this.state.lastScanAt = nowIso();
-
-    // Ordina per profit potential grezzo (volume + social) prima della decisione
-    const ranked = [...candidates].sort(
-      (a, b) => (b.volume24hUsd || 0) - (a.volume24hUsd || 0),
-    );
-
-    for (const candidate of ranked) {
+    for (const candidate of candidates) {
       if (!this.wallet.validateMint(candidate.mint)) continue;
       const decision = await this.engine.evaluate(candidate, trends);
       if (decision.decision === "reject") {
         await this.recordReject(decision);
         continue;
       }
-      if (decision.decision === "buy") {
-        await this.tryBuy(decision);
+      if (decision.decision === "buy" && this.canBuy()) {
+        await this.tryScanBuy(decision);
       }
     }
     await this.persist();
   }
 
-  private async tryBuy(decision: DecisionResult): Promise<void> {
-    if (!this.canBuy() || !decision.amountSol) return;
+  private async tryScanBuy(decision: DecisionResult): Promise<void> {
+    if (!decision.amountSol) return;
     if (this.state.openPositions.some((p) => p.mint === decision.candidate.mint)) return;
-
     const amountSol = Math.min(
       decision.amountSol,
       this.config.MAX_POSITION_SOL,
       this.state.residualBudgetSol,
     );
     if (amountSol <= 0) return;
-
     const slip = this.positions.dynamicSlippageBps(decision.candidate);
     const order = await this.router.buy(
       decision.candidate.mint,
@@ -244,18 +353,7 @@ export class BotController {
       decision.candidate.priceUsd,
       slip,
     );
-
-    if (!order.ok) {
-      await this.alerts.push({
-        severity: "warning",
-        title: "Buy fallito",
-        message: order.error ?? "Ordine buy non eseguito",
-        requiresUpdate: false,
-        source: "execution",
-      });
-      return;
-    }
-
+    if (!order.ok) return;
     const position = this.positions.openFromFill(
       decision.candidate,
       order.filledAmountSol || amountSol,
@@ -272,15 +370,6 @@ export class BotController {
     this.state.openPositions.push(position);
     this.state.residualBudgetSol = Math.max(0, this.state.residualBudgetSol - position.amountSol);
     await this.telegram.notifyBuy(decision, position);
-    logger.info(
-      {
-        symbol: position.symbol,
-        amountSol: position.amountSol,
-        riskPct: position.riskPct,
-        moonshot: position.highProfitPotential,
-      },
-      "Buy eseguito",
-    );
   }
 
   private async recordReject(decision: DecisionResult): Promise<void> {
@@ -288,16 +377,14 @@ export class BotController {
       at: nowIso(),
       candidate: decision.candidate,
       assessment: decision.assessment,
-      label: decision.rejectedAs ?? "Trade Rifiutato - Filtri Risk/Strategy",
+      label: decision.rejectedAs ?? "Rifiutato",
       motivation: decision.motivation,
     };
     this.state.rejectedTrades.unshift(row);
     this.state.rejectedTrades = this.state.rejectedTrades.slice(0, 100);
-    if (decision.assessment.technical.profitPotentialScore >= 60) {
-      await this.telegram.notifyReject(decision);
-    }
   }
 
+  /** Emergency TP/SL only — copy sell ha priorità quando arriva il segnale */
   private async positionCycle(): Promise<void> {
     if (!this.running) return;
     let unrealized = 0;
@@ -315,8 +402,8 @@ export class BotController {
       if (!orderOk) {
         await this.alerts.push({
           severity: "critical",
-          title: "Sell fallito",
-          message: error ?? "Impossibile chiudere posizione",
+          title: "Emergency sell fallito",
+          message: error ?? "Impossibile chiudere",
           requiresUpdate: true,
           source: "execution",
         });
@@ -324,6 +411,7 @@ export class BotController {
       }
 
       this.state.openPositions = this.state.openPositions.filter((p) => p.id !== position.id);
+      this.mirror?.reindex();
       this.state.closedTrades.unshift(trade);
       this.state.closedTrades = this.state.closedTrades.slice(0, 200);
       this.state.realizedPnlSol += trade.pnlSol;
@@ -341,29 +429,12 @@ export class BotController {
     if (!rpcOk) {
       await this.alerts.push({
         severity: "warning",
-        title: "Anomalia di rete / RPC",
-        message: "RPC Solana non raggiungibile. Verifica SOLANA_RPC_URL.",
+        title: "Anomalia rete / RPC Solana",
+        message: "RPC non raggiungibile — riconnessione watcher in corso.",
         requiresUpdate: false,
         source: "wallet",
       });
-    }
-
-    if (this.config.TRADING_MODE === "live" && !this.config.DRY_RUN) {
-      const health = await this.router.healthAll();
-      for (const h of health) {
-        if (h.venue === "paper") continue;
-        if (!h.ok) {
-          await this.alerts.push({
-            severity: "critical",
-            title: `Problema API ${h.venue}`,
-            message:
-              h.message ??
-              `Cambio API o endpoint non raggiungibile su ${h.venue}. Aggiorna istruzioni/keyword via Telegram.`,
-            requiresUpdate: true,
-            source: h.venue,
-          });
-        }
-      }
+      await this.watcher?.resubscribeAll();
     }
   }
 
@@ -374,35 +445,55 @@ export class BotController {
         return `Bot in pausa.${cmd.reason ? ` Motivo: ${cmd.reason}` : ""}`;
       case "resume":
         await this.resume();
-        return "Bot ripreso (H24 Max Profit running).";
+        return "Bot ripreso (Mirror H24).";
       case "budget":
         await this.setBudget(cmd.amountSol);
-        return `Budget aggiornato a ${cmd.amountSol} SOL. Residuo: ${this.state.residualBudgetSol.toFixed(4)} SOL`;
+        return `Budget aggiornato a ${cmd.amountSol} SOL`;
       case "risk_tolerance":
         await this.setRiskTolerance(cmd.tolerance);
-        return `Tolleranza rischio impostata: ${cmd.tolerance}`;
+        return `Tolleranza rischio: ${cmd.tolerance}`;
       case "risk_max":
         await this.setMaxRiskPct(cmd.maxRiskPct);
-        return `Rischio massimo impostato a ${cmd.maxRiskPct}%. Puoi regolare ulteriormente con /risk only_low | only_high.`;
+        return `Max risk ${cmd.maxRiskPct}%`;
       case "update":
         await this.applyLiveInstruction(cmd.instruction);
-        return `Istruzione ricevuta:\n${cmd.instruction}`;
+        return `Istruzione: ${cmd.instruction}`;
+      case "wallet_list":
+        this.syncTrackedView();
+        return formatWalletsPanel(this.state);
+      case "wallet_add": {
+        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(cmd.address)) {
+          return "Address Solana non valido";
+        }
+        const w = this.registry.addManual(cmd.address, cmd.label);
+        await this.watcher?.resubscribeAll();
+        await this.persist();
+        return `Wallet aggiunto: ${w.label} (${w.address})`;
+      }
+      case "wallet_remove": {
+        const ok = this.registry.remove(cmd.address);
+        await this.watcher?.resubscribeAll();
+        await this.persist();
+        return ok ? `Wallet rimosso: ${cmd.address}` : "Wallet non trovato";
+      }
+      case "wallet_refresh":
+        await this.refreshLeaderboard();
+        return `Top FOMO PnL aggiornata: ${this.registry.list(true).length} wallet attivi`;
       case "status":
         this.refreshAverageRisk();
         return [
           `Stato: ${this.state.status}`,
-          `Mode: ${this.state.tradingMode}${this.config.DRY_RUN ? " (dry-run)" : ""}`,
-          `Budget: ${this.state.budgetSol} SOL`,
-          `Residuo: ${this.state.residualBudgetSol.toFixed(4)} SOL`,
+          `Copy: ${this.state.copyTradingEnabled ? "ON" : "OFF"}`,
+          `Wallets: ${this.registry.list(true).length}`,
+          `Mirror BUY/SELL: ${this.state.mirrorBuys}/${this.state.mirrorSells}`,
+          `Budget: ${this.state.budgetSol} SOL · Residuo ${this.state.residualBudgetSol.toFixed(4)}`,
           `PnL: ${this.state.realizedPnlSol.toFixed(4)} SOL`,
           `Open: ${this.state.openPositions.length}`,
-          `Risk tolerance: ${this.state.riskTolerance}`,
           `Max risk: ${this.state.maxRiskPct}%`,
-          `Avg open risk: ${this.state.averageOpenRiskPct.toFixed(1)}%`,
         ].join("\n");
       case "start":
       case "dashboard":
-        return ""; // gestito da TelegramService.openDashboard
+        return "";
       default:
         return "Comando non gestito";
     }
@@ -431,12 +522,12 @@ async function main(): Promise<void> {
     {
       mode: config.TRADING_MODE,
       dryRun: config.DRY_RUN,
-      riskTolerance: config.RISK_TOLERANCE,
-      maxRiskPct: config.MAX_RISK_PCT,
-      venues: ["axiom", "anthem", "fomo", "pumpfun"],
+      copyTrading: config.COPY_TRADING_ENABLED,
+      preferredVenue: config.PREFERRED_EXECUTION_VENUE,
+      maxWallets: config.COPY_MAX_WALLETS,
       dashboard: `http://${config.DASHBOARD_HOST}:${config.DASHBOARD_PORT}`,
     },
-    "Solana Meme Bot H24 Max Profit pronto",
+    "Solana Mirror Bot H24 (FOMO Top PnL) pronto",
   );
 }
 

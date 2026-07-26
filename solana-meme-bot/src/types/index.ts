@@ -129,16 +129,28 @@ export interface Position {
   riskPct: number;
   riskBand: RiskBand;
   highProfitPotential: boolean;
+  /** Mirror trading metadata */
+  copyFromAddress?: string;
+  copyFromLabel?: string;
+  copySourceSignature?: string;
+  listeningForCopySell?: boolean;
 }
 
 export interface ClosedTrade {
   position: Position;
   sellPriceUsd: number;
   closedAt: string;
-  reason: "take_profit" | "stop_loss" | "trailing_stop" | "manual" | "risk_exit";
+  reason:
+    | "take_profit"
+    | "stop_loss"
+    | "trailing_stop"
+    | "manual"
+    | "risk_exit"
+    | "copy_sell";
   pnlSol: number;
   pnlUsd: number;
   pnlPct: number;
+  copyLatencyNote?: string;
 }
 
 export interface RejectedTrade {
@@ -160,6 +172,17 @@ export interface SystemAlert {
   source: string;
 }
 
+export interface TrackedWalletView {
+  address: string;
+  label: string;
+  rank?: number;
+  realizedPnlUsd?: number;
+  reliabilityScore: number;
+  source: string;
+  enabled: boolean;
+  lastSeenAt?: string;
+}
+
 export interface BotRuntimeState {
   status: BotStatus;
   startedAt: string | null;
@@ -178,6 +201,12 @@ export interface BotRuntimeState {
   riskTolerance: RiskTolerance;
   maxRiskPct: number;
   averageOpenRiskPct: number;
+  /** Copy trading */
+  copyTradingEnabled: boolean;
+  trackedWallets: TrackedWalletView[];
+  lastMirrorAt: string | null;
+  mirrorBuys: number;
+  mirrorSells: number;
 }
 
 export interface OrderRequest {

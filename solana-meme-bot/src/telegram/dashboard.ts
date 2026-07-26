@@ -9,6 +9,7 @@ export type DashAction =
   | "dash_positions"
   | "dash_closed"
   | "dash_alerts"
+  | "dash_wallets"
   | "dash_risk_menu"
   | "dash_risk_all"
   | "dash_risk_low"
@@ -48,6 +49,7 @@ export function dashboardKeyboard(riskMenu = false): TelegramBot.InlineKeyboardM
         { text: "⚠️ Avvisi", callback_data: "dash_alerts" },
       ],
       [
+        { text: "👛 Wallets FOMO", callback_data: "dash_wallets" },
         { text: "🎚 Risk mode", callback_data: "dash_risk_menu" },
         { text: "❓ Help", callback_data: "dash_help" },
       ],
@@ -74,10 +76,28 @@ export function formatDashboard(state: BotRuntimeState, modeLabel: string): stri
     `🛡 Rifiuti recenti: <b>${state.rejectedTrades.length}</b> · Alert aperti: <b>${state.alerts.filter((a) => a.requiresUpdate && !a.acknowledged).length}</b>`,
     state.lastScanAt ? `⏱ Ultimo scan: ${state.lastScanAt}` : "⏱ Nessuno scan ancora",
     "",
-    "<b>Trade attivi</b>",
+    "<b>Trade attivi (mirror)</b>",
     ...(openLines.length ? openLines : ["• Nessuna posizione aperta"]),
     "",
-    "Usa i pulsanti sotto per controllare il bot.",
+    `<b>FOMO Top wallets tracciati:</b> ${state.trackedWallets.filter((w) => w.enabled).length}/${state.trackedWallets.length}`,
+    `🪞 Mirror BUY: <b>${state.mirrorBuys}</b> · SELL: <b>${state.mirrorSells}</b>`,
+    state.lastMirrorAt ? `⏱ Ultimo mirror: ${state.lastMirrorAt}` : "⏱ In ascolto WebSocket/poll…",
+    "",
+    "Usa i pulsanti sotto · /wallets list · /wallets refresh",
+  ].join("\n");
+}
+
+export function formatWalletsPanel(state: BotRuntimeState): string {
+  const rows = state.trackedWallets.slice(0, 20);
+  if (!rows.length) return "👛 <b>Wallet tracciati</b>\nNessun wallet. Usa /wallets refresh";
+  return [
+    "👛 <b>TOP WALLET FOMO / COPY LIST</b>",
+    ...rows.map((w, i) => {
+      const short = `${w.address.slice(0, 4)}…${w.address.slice(-4)}`;
+      const pnl =
+        w.realizedPnlUsd != null ? ` · PnL $${Math.round(w.realizedPnlUsd).toLocaleString("en-US")}` : "";
+      return `${w.enabled ? "🟢" : "⚪"} ${i + 1}. <b>${escapeHtml(w.label)}</b> (${short})${pnl} · rel ${w.reliabilityScore}`;
+    }),
   ].join("\n");
 }
 
