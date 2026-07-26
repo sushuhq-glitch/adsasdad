@@ -36,11 +36,15 @@ export class TelegramService {
   private handler: CommandHandler | null = null;
   private stateProvider: StateProvider | null = null;
   private modeLabel: ModeLabelProvider = () => "paper";
+  /** Destinatario notifiche (buy/sell/alert). Non è una allowlist. */
   private boundChatId: string | null = null;
+  /** Allowlist esplicita da env — se vuota, qualsiasi chat private è ok. */
+  private readonly explicitAllowlist: string[];
   /** chatId -> last dashboard message id for edit-in-place */
   private dashMsg = new Map<string, number>();
 
   constructor(private config: AppConfig) {
+    this.explicitAllowlist = [...config.allowedChatIds];
     if (config.TELEGRAM_CHAT_ID) this.boundChatId = config.TELEGRAM_CHAT_ID;
   }
 
@@ -78,15 +82,27 @@ export class TelegramService {
       const text = msg.text?.trim();
       if (!text) return;
 
-      await this.maybeBindChat(chatId, msg.chat.type);
-
-      if (!this.isAllowed(chatId)) {
+      if (!this.isAllowed(chatId, msg.chat.type)) {
         logger.warn({ chatId }, "Chat Telegram non autorizzata");
-        await this.send(chatId, "⛔ Chat non autorizzata. Contatta l'owner del bot.");
+        try {
+          await this.bot?.sendMessage(
+            chatId,
+            "⛔ Chat non autorizzata. Se sei l'owner, aggiungi il tuo chat_id in TELEGRAM_ALLOWED_CHAT_IDS oppure lascia la lista vuota.",
+          );
+        } catch {
+          /* ignore */
+        }
         return;
       }
 
       const cmd = parseTelegramCommand(text);
+      // /start riassocia sempre la chat notifiche (fixa lock su ID vecchio)
+      if (cmd.type === "start" || cmd.type === "dashboard") {
+        await this.bindNotifyChat(chatId, msg.chat.type, true);
+      } else {
+        await this.bindNotifyChat(chatId, msg.chat.type, false);
+      }
+
       try {
         if (cmd.type === "start" || cmd.type === "dashboard") {
           await this.openDashboard(chatId);
@@ -129,12 +145,13 @@ export class TelegramService {
       const chatId = String(q.message?.chat.id ?? "");
       const data = (q.data ?? "") as DashAction;
       if (!chatId || !q.id) return;
+      const chatType = q.message?.chat.type ?? "private";
 
-      await this.maybeBindChat(chatId, q.message?.chat.type ?? "private");
-      if (!this.isAllowed(chatId)) {
+      if (!this.isAllowed(chatId, chatType)) {
         await this.bot?.answerCallbackQuery(q.id, { text: "Non autorizzato", show_alert: true });
         return;
       }
+      await this.bindNotifyChat(chatId, chatType, false);
 
       try {
         await this.handleDashAction(chatId, data);
@@ -162,35 +179,36 @@ export class TelegramService {
       if (parsed.chatId) {
         this.boundChatId = parsed.chatId;
         this.config.TELEGRAM_CHAT_ID = parsed.chatId;
-        if (!this.config.allowedChatIds.includes(parsed.chatId)) {
-          this.config.allowedChatIds.push(parsed.chatId);
-        }
-        logger.info({ chatId: parsed.chatId }, "Chat Telegram ripristinata");
+        logger.info({ chatId: parsed.chatId }, "Chat notifiche Telegram ripristinata");
       }
     } catch {
       /* no file yet */
     }
   }
 
-  private async maybeBindChat(chatId: string, chatType: string): Promise<void> {
-    if (this.boundChatId) return;
+  /**
+   * Associa la chat per le notifiche. Non modifica l'allowlist.
+   * Con force=true (/start) sovrascrive un binding vecchio.
+   */
+  private async bindNotifyChat(chatId: string, chatType: string, force: boolean): Promise<void> {
     if (chatType !== "private" && chatType !== "group" && chatType !== "supergroup") return;
-    // Prima chat che scrive diventa owner se non c'è chat configurata
+    if (!force && this.boundChatId) return;
+    if (this.boundChatId === chatId) return;
+
     this.boundChatId = chatId;
     this.config.TELEGRAM_CHAT_ID = chatId;
-    if (!this.config.allowedChatIds.includes(chatId)) this.config.allowedChatIds.push(chatId);
     await fs.mkdir(path.dirname(CHAT_FILE), { recursive: true });
     await fs.writeFile(CHAT_FILE, JSON.stringify({ chatId }, null, 2), "utf8");
-    logger.info({ chatId }, "Chat Telegram associata automaticamente");
+    logger.info({ chatId, force }, "Chat notifiche Telegram aggiornata");
   }
 
-  private isAllowed(chatId: string): boolean {
-    // Se non abbiamo ancora unbound owner, accetta il primo (binding in corso)
-    if (!this.boundChatId && this.config.allowedChatIds.length === 0) return true;
-    if (this.config.allowedChatIds.length === 0) {
-      return !this.boundChatId || this.boundChatId === chatId;
+  private isAllowed(chatId: string, chatType: string): boolean {
+    // Allowlist esplicita da .env → solo quelle chat
+    if (this.explicitAllowlist.length > 0) {
+      return this.explicitAllowlist.includes(chatId);
     }
-    return this.config.allowedChatIds.includes(chatId);
+    // Nessuna allowlist: qualsiasi chat private/group può usare il bot personale
+    return chatType === "private" || chatType === "group" || chatType === "supergroup";
   }
 
   private async handleDashAction(chatId: string, action: DashAction): Promise<void> {
