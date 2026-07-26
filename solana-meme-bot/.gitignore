@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+data/runtime-state.json
+data/*.tmp
+*.log
+.DS_Store
+coverage/

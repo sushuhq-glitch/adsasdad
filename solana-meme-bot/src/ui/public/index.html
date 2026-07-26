@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Solana Meme Bot — Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div class="bg"></div>
+    <main class="shell">
+      <header class="top">
+        <div>
+          <p class="brand">SOLANA MEME BOT</p>
+          <h1>Control Room H24</h1>
+          <p class="sub">Motore Zero Dubbi · Telegram sync · Paper-first</p>
+        </div>
+        <div class="auth">
+          <label>
+            Token
+            <input id="token" type="password" placeholder="DASHBOARD_AUTH_TOKEN" />
+          </label>
+          <button id="saveToken" type="button">Connetti</button>
+        </div>
+      </header>
+
+      <section class="status-row" id="statusRow">
+        <article>
+          <span>Stato</span>
+          <strong id="botStatus">—</strong>
+        </article>
+        <article>
+          <span>PnL totale</span>
+          <strong id="pnl">—</strong>
+        </article>
+        <article>
+          <span>Budget residuo</span>
+          <strong id="residual">—</strong>
+        </article>
+        <article>
+          <span>Posizioni aperte</span>
+          <strong id="openCount">—</strong>
+        </article>
+      </section>
+
+      <section class="actions">
+        <button id="pauseBtn" type="button">Pausa</button>
+        <button id="resumeBtn" type="button" class="primary">Resume</button>
+        <label class="inline">
+          Budget SOL
+          <input id="budgetInput" type="number" min="0.01" step="0.01" />
+          <button id="budgetBtn" type="button">Aggiorna</button>
+        </label>
+      </section>
+
+      <section class="grid">
+        <div class="panel">
+          <h2>Posizioni aperte</h2>
+          <div id="positions" class="list empty">Nessuna posizione</div>
+        </div>
+        <div class="panel warn">
+          <h2>AVVISI & AGGIORNAMENTI RICHIESTI</h2>
+          <p class="hint">Sincronizzato con le notifiche Telegram prioritarie</p>
+          <div id="alerts" class="list empty">Nessun avviso</div>
+        </div>
+        <div class="panel">
+          <h2>Trade rifiutati (Zero Dubbi)</h2>
+          <div id="rejects" class="list empty">—</div>
+        </div>
+        <div class="panel">
+          <h2>Istruzioni live</h2>
+          <div id="instructions" class="list empty">Nessuna istruzione</div>
+        </div>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
