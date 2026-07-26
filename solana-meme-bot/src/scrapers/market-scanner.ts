@@ -53,7 +53,9 @@ export class MarketScanner {
   }
 
   async fetchTokenPrice(mint: string): Promise<number | null> {
+    // Cache-bust: riusa DexScreener con timestamp per evitare prezzi stantii
     const token = await this.dex.fetchToken(mint);
-    return token?.priceUsd ?? null;
+    const px = token?.priceUsd ?? 0;
+    return px > 0 ? px : null;
   }
 }

@@ -34,13 +34,17 @@ export function formatSellMessage(trade: ClosedTrade): string {
     risk_exit: "Uscita per rischio",
     copy_sell: "Copy sell",
   };
+  const entry = trade.position.entryPriceUsd;
+  const movePct = entry > 0 ? ((trade.sellPriceUsd - entry) / entry) * 100 : trade.pnlPct;
   return [
     `${sign} <b>AGGIORNAMENTO CHIUSURA POSIZIONE / PnL</b>`,
     `• Token: $${trade.position.symbol}`,
+    `• Entry Price: ${fmtUsd(entry, 6)}`,
     `• Prezzo di Uscita (Sell Price): ${fmtUsd(trade.sellPriceUsd, 6)}`,
+    `• Variazione prezzo: <b>${movePct >= 0 ? "+" : ""}${movePct.toFixed(2)}%</b>`,
     `• ${reasonLabel[trade.reason]}: ${trade.pnlPct >= 0 ? "+" : ""}${trade.pnlPct.toFixed(2)}%`,
     `• Rischio Trade in ingresso: ${trade.position.riskPct}%`,
-    `• Profit/Loss Netto: ${fmtSol(trade.pnlSol)} (${trade.pnlUsd >= 0 ? "+" : "-"}${fmtUsd(Math.abs(trade.pnlUsd))})`,
+    `• Profit/Loss Netto: <b>${fmtSol(trade.pnlSol)}</b> (${trade.pnlUsd >= 0 ? "+" : "-"}${fmtUsd(Math.abs(trade.pnlUsd))})`,
   ].join("\n");
 }
 
@@ -70,12 +74,18 @@ export function formatCopyBuyMessage(params: {
 
 export function formatCopySellMessage(trade: ClosedTrade): string {
   const wallet = trade.position.copyFromLabel || "Wallet tracciato";
+  const entry = trade.position.entryPriceUsd;
+  const exit = trade.sellPriceUsd;
+  const movePct = entry > 0 ? ((exit - entry) / entry) * 100 : trade.pnlPct;
+  const sign = trade.pnlSol >= 0 ? "📈" : "📉";
   return [
     "⚡ <b>VENDITA IMMEDIATA ESEGUITA (COPY SELL)</b>",
     `• Token: $${trade.position.symbol} (Solana)`,
-    `• Prezzo di Uscita (Sell Price): ${fmtUsd(trade.sellPriceUsd, 6)}`,
+    `• Entry Price: ${fmtUsd(entry, 6)}`,
+    `• Prezzo di Uscita (Sell Price): ${fmtUsd(exit, 6)}`,
+    `• Variazione prezzo: <b>${movePct >= 0 ? "+" : ""}${movePct.toFixed(2)}%</b>`,
     `• Motivo Uscita: 🚨 Rilevata vendita istantanea dal Wallet Copiato (${escapeHtml(wallet)}) — Nessuna attesa.`,
-    `• Profit/Loss Netto: ${fmtSol(trade.pnlSol)} (${trade.pnlUsd >= 0 ? "+" : "-"}${fmtUsd(Math.abs(trade.pnlUsd))}) [${trade.pnlPct >= 0 ? "+" : ""}${trade.pnlPct.toFixed(0)}%]`,
+    `${sign} Profit/Loss Netto: <b>${fmtSol(trade.pnlSol)}</b> (${trade.pnlUsd >= 0 ? "+" : "-"}${fmtUsd(Math.abs(trade.pnlUsd))}) [<b>${trade.pnlPct >= 0 ? "+" : ""}${trade.pnlPct.toFixed(2)}%</b>]`,
     trade.copyLatencyNote ? `• ${escapeHtml(trade.copyLatencyNote)}` : "",
   ]
     .filter(Boolean)

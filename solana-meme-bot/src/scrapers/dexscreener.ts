@@ -54,12 +54,16 @@ export class DexScreenerClient {
 
   async fetchToken(mint: string): Promise<TokenCandidate | null> {
     try {
-      const res = await fetch(`${this.baseUrl}/latest/dex/tokens/${mint}`, {
-        headers: { accept: "application/json" },
+      const bust = Date.now();
+      const res = await fetch(`${this.baseUrl}/latest/dex/tokens/${mint}?t=${bust}`, {
+        headers: { accept: "application/json", "cache-control": "no-cache" },
       });
       if (!res.ok) return null;
       const json = (await res.json()) as { pairs?: DexPair[] };
-      const pair = (json.pairs ?? []).find((p) => p.chainId === "solana");
+      const pairs = (json.pairs ?? [])
+        .filter((p) => p.chainId === "solana" && Number(p.priceUsd) > 0)
+        .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
+      const pair = pairs[0];
       if (!pair?.baseToken?.address) return null;
 
       const created = pair.pairCreatedAt ? Number(pair.pairCreatedAt) : Date.now();

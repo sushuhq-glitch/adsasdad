@@ -13,11 +13,23 @@ export class PaperExecutionAdapter implements ExecutionAdapter {
   }
 
   async placeOrder(req: OrderRequest, tokenPriceUsd: number): Promise<OrderResult> {
+    if (!(tokenPriceUsd > 0) || !Number.isFinite(tokenPriceUsd)) {
+      return {
+        ok: false,
+        venue: "paper",
+        filledPriceUsd: 0,
+        filledAmountSol: 0,
+        filledTokenAmount: 0,
+        simulated: true,
+        error: "Prezzo mark non valido per paper order",
+      };
+    }
+
     const slip = req.slippageBps / 10_000;
-    const fillPrice =
-      req.side === "buy" ? tokenPriceUsd * (1 + slip / 2) : tokenPriceUsd * (1 - slip / 2);
 
     if (req.side === "buy") {
+      // Entry leggermente peggiore dello spot (slippage)
+      const fillPrice = tokenPriceUsd * (1 + slip / 2);
       const amountSol = req.amountSol ?? 0;
       const notionalUsd = amountSol * this.solUsdEstimate;
       const tokenAmount = fillPrice > 0 ? notionalUsd / fillPrice : 0;
@@ -32,8 +44,11 @@ export class PaperExecutionAdapter implements ExecutionAdapter {
       };
     }
 
+    // SELL: il filledPriceUsd è il mark di mercato (per PnL % reale).
+    // Lo slippage riduce solo il notional SOL recuperato (fee di esecuzione).
+    const fillPrice = tokenPriceUsd;
     const tokenAmount = req.tokenAmount ?? 0;
-    const notionalUsd = fillPrice * tokenAmount;
+    const notionalUsd = fillPrice * tokenAmount * (1 - slip / 2);
     const amountSol = notionalUsd / this.solUsdEstimate;
     return {
       ok: true,

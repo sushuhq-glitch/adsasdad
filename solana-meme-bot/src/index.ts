@@ -390,11 +390,19 @@ export class BotController {
     let unrealized = 0;
 
     for (const position of [...this.state.openPositions]) {
-      const mark = (await this.scanner.fetchTokenPrice(position.mint)) ?? position.entryPriceUsd;
-      this.positions.updatePeak(position, mark);
-      const pnlPct = ((mark - position.entryPriceUsd) / position.entryPriceUsd) * 100;
+      const quote = await this.positions.getOracle().getLivePriceUsd(position.mint, {
+        bypassCache: true,
+      });
+      const mark = quote.priceUsd > 0 ? quote.priceUsd : undefined;
+      if (mark) this.positions.updatePeak(position, mark);
+      const markForPnl = mark ?? position.peakPriceUsd ?? position.entryPriceUsd;
+      const pnlPct =
+        position.entryPriceUsd > 0
+          ? ((markForPnl - position.entryPriceUsd) / position.entryPriceUsd) * 100
+          : 0;
       unrealized += position.amountSol * (pnlPct / 100);
 
+      if (!mark) continue;
       const signal = this.positions.exitSignal(position, mark);
       if (!signal) continue;
 

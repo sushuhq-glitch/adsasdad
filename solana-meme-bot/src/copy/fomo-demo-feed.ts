@@ -59,12 +59,18 @@ export class FomoDemoFeed {
     this.registry.upsertMany(fixed);
   }
 
+  private openedAt = new Map<string, number>();
+
   private async tick(onSignal: (s: MirrorSignal) => void | Promise<void>): Promise<void> {
     try {
-      // Chiudi qualche posizione demo (copy sell)
+      // Chiudi posizioni demo solo dopo un hold minimo (evita sell≈entry)
+      const minHoldMs = 20_000;
       for (const [mint, row] of [...this.openDemo.entries()]) {
-        if (Math.random() > 0.45) continue;
+        const held = Date.now() - (this.openedAt.get(mint) ?? 0);
+        if (held < minHoldMs) continue;
+        if (Math.random() > 0.55) continue;
         this.openDemo.delete(mint);
+        this.openedAt.delete(mint);
         await onSignal({
           side: "sell",
           wallet: row.wallet,
@@ -86,6 +92,7 @@ export class FomoDemoFeed {
       if (this.openDemo.has(token.mint)) return;
 
       this.openDemo.set(token.mint, { mint: token.mint, wallet });
+      this.openedAt.set(token.mint, Date.now());
       await onSignal({
         side: "buy",
         wallet,

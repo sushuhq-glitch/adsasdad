@@ -87,7 +87,13 @@ export class MirrorEngine {
       return;
     }
 
-    const price = token?.priceUsd ?? 0.000001;
+    const live = await this.positions.getOracle().getLivePriceUsd(signal.mint, { bypassCache: true });
+    const price =
+      live.priceUsd > 0 ? live.priceUsd : token?.priceUsd && token.priceUsd > 0 ? token.priceUsd : 0;
+    if (!(price > 0)) {
+      await this.cbs.onSkip("Prezzo live non disponibile per COPY BUY", signal);
+      return;
+    }
     const slip = token ? this.positions.dynamicSlippageBps(token) : this.config.DEFAULT_SLIPPAGE_BPS;
     const t0 = Date.now();
     const order = await this.router.buy(signal.mint, amountSol, price, slip);
@@ -156,12 +162,13 @@ export class MirrorEngine {
       return;
     }
 
+    // Hint opzionale da Dex; closePosition forza comunque un refresh live multi-source
     const token = await this.resolveToken(signal.mint);
-    const mark = token?.priceUsd ?? position.entryPriceUsd;
+    const hint = token?.priceUsd && token.priceUsd > 0 ? token.priceUsd : undefined;
     const t0 = Date.now();
-    const { trade, orderOk, error } = await this.positions.closePosition(
+    const { trade, orderOk, error, priceSource } = await this.positions.closePosition(
       position,
-      mark,
+      hint,
       "copy_sell",
     );
     if (!orderOk) {
@@ -177,12 +184,31 @@ export class MirrorEngine {
     this.state.residualBudgetSol += position.amountSol + trade.pnlSol;
 
     const latency = Date.now() - t0;
-    const note =
+    const move =
+      position.entryPriceUsd > 0
+        ? ((trade.sellPriceUsd - position.entryPriceUsd) / position.entryPriceUsd) * 100
+        : 0;
+    const noteParts = [
       (signal.sellFraction ?? 1) >= 0.95
-        ? `Il wallet ${signal.wallet.label} ha venduto il 100% della posizione. Transazione replicata in ${latency}ms.`
-        : `Vendita parziale rilevata (~${Math.round((signal.sellFraction ?? 1) * 100)}%). Mirror sell eseguito in ${latency}ms.`;
+        ? `Il wallet ${signal.wallet.label} ha venduto il 100% della posizione.`
+        : `Vendita parziale (~${Math.round((signal.sellFraction ?? 1) * 100)}%).`,
+      `Prezzo live (${priceSource ?? "oracle"}): entry ${position.entryPriceUsd} → exit ${trade.sellPriceUsd} (Δ ${move >= 0 ? "+" : ""}${move.toFixed(2)}%).`,
+      `Replicata in ${latency}ms.`,
+    ];
+    const note = noteParts.join(" ");
 
-    logger.info({ mint: position.mint, latency, pnl: trade.pnlSol }, "COPY SELL eseguito");
+    logger.info(
+      {
+        mint: position.mint,
+        latency,
+        pnl: trade.pnlSol,
+        pnlPct: trade.pnlPct,
+        entry: position.entryPriceUsd,
+        sell: trade.sellPriceUsd,
+        priceSource,
+      },
+      "COPY SELL eseguito",
+    );
     await this.cbs.onCopySell(trade, signal, note);
     await this.cbs.persist();
   }
