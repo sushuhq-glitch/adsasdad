@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 data/runtime-state.json
+data/telegram-chat.json
 data/*.tmp
 *.log
 .DS_Store

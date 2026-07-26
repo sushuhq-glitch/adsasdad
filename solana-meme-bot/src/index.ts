@@ -72,7 +72,11 @@ export class BotController {
     this.state.maxRiskPct = this.state.maxRiskPct ?? this.config.MAX_RISK_PCT;
     this.engine.setRiskTolerance(this.state.riskTolerance);
     this.engine.setMaxRiskPct(this.state.maxRiskPct);
-    this.telegram.start(async (cmd, chatId) => this.handleCommand(cmd, chatId));
+    this.telegram.start(async (cmd, chatId) => this.handleCommand(cmd, chatId), {
+      stateProvider: () => this.getState(),
+      modeLabel: () =>
+        `${this.state.tradingMode}${this.config.DRY_RUN ? " dry-run" : ""}${this.state.tradingMode === "paper" ? " 🧪" : ""}`,
+    });
   }
 
   async start(): Promise<void> {
@@ -396,6 +400,9 @@ export class BotController {
           `Max risk: ${this.state.maxRiskPct}%`,
           `Avg open risk: ${this.state.averageOpenRiskPct.toFixed(1)}%`,
         ].join("\n");
+      case "start":
+      case "dashboard":
+        return ""; // gestito da TelegramService.openDashboard
       default:
         return "Comando non gestito";
     }
