@@ -15,6 +15,7 @@ export type TelegramCommand =
   | { type: "wallet_refresh" }
   | { type: "closeall" }
   | { type: "profitall" }
+  | { type: "balance" }
   | { type: "help" }
   | { type: "start" }
   | { type: "unknown"; raw: string };
@@ -47,6 +48,7 @@ export function parseTelegramCommand(text: string): TelegramCommand {
   }
   if (c === "/closeall" || c === "closeall") return { type: "closeall" };
   if (c === "/profitall" || c === "profitall") return { type: "profitall" };
+  if (c === "/balance" || c === "balance" || c === "/bal" || c === "bal") return { type: "balance" };
   if (c === "/pause" || c === "pause") return { type: "pause", reason: body || undefined };
   if (c === "/resume" || c === "resume") return { type: "resume" };
   if (c === "/status" || c === "status") return { type: "status" };
@@ -96,6 +98,7 @@ export const HELP_TEXT = [
   "/setup — rifai setup",
   "/menu — posizioni live · stats · settings",
   "/profitall — PnL sessione + 24h / 3d / 7d / 30d",
+  "/balance — cash, posizioni, equity e SOL on-chain",
   "/closeall — liquida tutto + reset sessione Fomo",
   "/wallets list · /wallets refresh",
   "/pause · /resume · /budget &lt;SOL&gt;",

@@ -12,6 +12,8 @@ export interface UserBotSettings {
   solUsd: number;
   /** Username Fomo da tracciare (senza @) */
   fomoUsernames: string[];
+  /** Wallet Solana collegato (per leggere balance on-chain) */
+  solanaAddress: string;
   onboarded: boolean;
   /** Inizio sessione corrente (dopo /start setup completato) */
   sessionStartedAt: string | null;
@@ -29,6 +31,7 @@ export function defaultSettings(): UserBotSettings {
     fixedTradeSol: 0.15,
     solUsd: 150,
     fomoUsernames: [...DEFAULT_USERNAMES],
+    solanaAddress: "",
     onboarded: false,
     sessionStartedAt: null,
     updatedAt: nowIso(),
@@ -51,6 +54,7 @@ export class UserSettingsStore {
         ...parsed,
         fixedTradeSol: Number(parsed.fixedTradeSol ?? fallbackTradeSol) || fallbackTradeSol,
         fomoAuthenticated: Boolean(parsed.fomoAuthenticated),
+        solanaAddress: typeof parsed.solanaAddress === "string" ? parsed.solanaAddress : "",
         fomoUsernames:
           Array.isArray(parsed.fomoUsernames) && parsed.fomoUsernames.length
             ? parsed.fomoUsernames.map(normalizeUsername)

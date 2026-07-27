@@ -77,21 +77,24 @@ export function mainMenuKeyboard(onboarded: boolean): {
   return {
     inline_keyboard: [
       [
+        { text: "💰 Balance", callback_data: "dash_balance" },
         { text: "📊 Posizioni aperte", callback_data: "dash_live_positions" },
+      ],
+      [
         { text: "📈 Win/Loss Stats", callback_data: "dash_stats" },
-      ],
-      [
         { text: "📈 /profitall", callback_data: "dash_profitall" },
-        { text: "🚨 /closeall", callback_data: "dash_closeall" },
       ],
       [
+        { text: "🚨 /closeall", callback_data: "dash_closeall" },
         { text: "👛 Target Fomo", callback_data: "dash_wallets" },
+      ],
+      [
         { text: "⚙️ Settings", callback_data: "dash_settings" },
+        { text: "🔄 Refresh", callback_data: "dash_refresh" },
       ],
       [
         { text: "⏸ Pausa", callback_data: "dash_pause" },
         { text: "▶️ Resume", callback_data: "dash_resume" },
-        { text: "🔄 Refresh", callback_data: "dash_refresh" },
       ],
     ],
   };
@@ -103,12 +106,63 @@ export function settingsKeyboard(): {
   return {
     inline_keyboard: [
       [{ text: "💰 Cambia budget/trade", callback_data: "dash_set_budget" }],
-      [{ text: "🔑 Cambia FOMO API Key", callback_data: "dash_set_fomo_key" }],
+      [{ text: "🔑 Cambia sessione Fomo (privy:token)", callback_data: "dash_set_fomo_key" }],
+      [{ text: "🏦 Imposta wallet Solana", callback_data: "dash_set_wallet" }],
       [{ text: "➕ Aggiungi @username", callback_data: "dash_add_username" }],
       [{ text: "🚨 Close all + reset", callback_data: "dash_closeall" }],
       [{ text: "⬅️ Menu", callback_data: "dash_refresh" }],
     ],
   };
+}
+
+export function formatBalanceReport(params: {
+  mode: string;
+  budgetSol: number;
+  residualSol: number;
+  openPositionsSol: number;
+  unrealizedPnlSol: number;
+  realizedPnlSol: number;
+  sessionPnlSol: number;
+  openCount: number;
+  solUsd: number;
+  onChainSol: number | null;
+  walletAddress: string | null;
+}): string {
+  const equity = params.residualSol + params.openPositionsSol + params.unrealizedPnlSol;
+  const lines = [
+    "💰 <b>BALANCE / PORTAFOGLIO</b>",
+    `• Mode: <b>${escapeHtml(params.mode)}</b>`,
+    "",
+    "<b>Paper / Bot</b>",
+    `• Budget totale: <b>${params.budgetSol.toFixed(4)} SOL</b> (~${fmtUsd(params.budgetSol * params.solUsd)})`,
+    `• Disponibile (cash): <b>${params.residualSol.toFixed(4)} SOL</b>`,
+    `• In posizioni aperte: <b>${params.openPositionsSol.toFixed(4)} SOL</b> (${params.openCount} token)`,
+    `• Unrealized PnL: <b>${fmtSol(params.unrealizedPnlSol)}</b>`,
+    `• Equity stimata: <b>${equity.toFixed(4)} SOL</b> (~${fmtUsd(equity * params.solUsd)})`,
+    `• PnL realizzato: <b>${fmtSol(params.realizedPnlSol)}</b>`,
+    `• PnL sessione: <b>${fmtSol(params.sessionPnlSol)}</b>`,
+    "",
+    "<b>On-chain Solana</b>",
+  ];
+  if (params.walletAddress && params.onChainSol != null) {
+    const short = `${params.walletAddress.slice(0, 4)}…${params.walletAddress.slice(-4)}`;
+    lines.push(
+      `• Wallet: <code>${escapeHtml(short)}</code>`,
+      `• Balance live: <b>${params.onChainSol.toFixed(4)} SOL</b> (~${fmtUsd(params.onChainSol * params.solUsd)})`,
+    );
+  } else if (params.walletAddress) {
+    lines.push(
+      `• Wallet: <code>${escapeHtml(params.walletAddress.slice(0, 4))}…${escapeHtml(params.walletAddress.slice(-4))}</code>`,
+      "• Balance live: non leggibile (RPC error)",
+    );
+  } else {
+    lines.push(
+      "• Nessun wallet collegato.",
+      "• Impostalo da ⚙️ Settings → <b>Imposta wallet Solana</b>",
+      "  (indirizzo pubblico, es. quello su Fomo → profilo)",
+    );
+  }
+  return lines.join("\n");
 }
 
 export function formatLivePositionsReport(
@@ -176,6 +230,7 @@ export function formatSettingsPanel(settings: UserBotSettings, state: BotRuntime
     `• Budget/trade: <b>${settings.fixedTradeSol} SOL</b>`,
     `• SOL/USD ref: ${settings.solUsd}`,
     `• FOMO API: ${settings.fomoAuthenticated ? "••••" + (settings.fomoApiKey.slice(-4) || "demo") : "non autenticata"}`,
+    `• Wallet Solana: ${settings.solanaAddress ? settings.solanaAddress.slice(0, 4) + "…" + settings.solanaAddress.slice(-4) : "non impostato"}`,
     `• Target usernames: ${settings.fomoUsernames.map(formatUsername).join(", ") || "—"}`,
     "",
     "Usa i pulsanti per modificare budget, API key o lista @username.",

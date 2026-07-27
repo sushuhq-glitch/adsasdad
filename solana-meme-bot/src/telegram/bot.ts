@@ -50,7 +50,8 @@ type PendingStep =
   | "await_budget"
   | "edit_fomo_key"
   | "edit_budget"
-  | "add_username";
+  | "add_username"
+  | "set_wallet";
 
 const CHAT_FILE = path.resolve("data/telegram-chat.json");
 
@@ -109,6 +110,7 @@ export class TelegramService {
       { command: "setup", description: "Rifai setup API Key + budget" },
       { command: "menu", description: "Menu principale" },
       { command: "profitall", description: "Report PnL sessione + 24h/3d/7d/30d" },
+      { command: "balance", description: "Mostra balance / equity / SOL" },
       { command: "closeall", description: "Liquida tutto e reset sessione Fomo" },
       { command: "wallets", description: "Lista target Fomo" },
       { command: "status", description: "Stato rapido" },
@@ -331,6 +333,25 @@ export class TelegramService {
       await this.onSettingsChanged?.(settings);
       await this.sendMenu(chatId, `✅ Aggiunto <b>@${u}</b> ai target Fomo.`, settingsKeyboard());
     }
+
+    if (step === "set_wallet") {
+      const addr = text.trim();
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) {
+        await this.send(
+          chatId,
+          "Indirizzo Solana non valido. Incolla l'address pubblico (32–44 caratteri base58).",
+        );
+        return;
+      }
+      const settings = await this.settingsStore.save({ solanaAddress: addr });
+      this.pending.delete(chatId);
+      await this.onSettingsChanged?.(settings);
+      await this.sendMenu(
+        chatId,
+        `✅ Wallet collegato: <code>${addr.slice(0, 4)}…${addr.slice(-4)}</code>\nUsa /balance o 💰 Balance.`,
+        settingsKeyboard(),
+      );
+    }
   }
 
   private async handleDashAction(chatId: string, action: string): Promise<void> {
@@ -360,6 +381,22 @@ export class TelegramService {
         await this.sendMenu(chatId, formatLivePositionsReport(rows, settings), mainMenuKeyboard(true));
         return;
       }
+      case "dash_balance": {
+        const reply = await this.handler?.({ type: "balance" }, chatId);
+        if (reply) await this.sendMenu(chatId, reply, mainMenuKeyboard(settings.onboarded));
+        return;
+      }
+      case "dash_set_wallet":
+        this.pending.set(chatId, "set_wallet");
+        await this.send(
+          chatId,
+          [
+            "🏦 Invia il tuo <b>indirizzo wallet Solana</b> (pubblico).",
+            "Lo trovi su Fomo → profilo, oppure in Phantom / Solflare.",
+            "Serve solo per leggere il balance on-chain (non chiede la private key).",
+          ].join("\n"),
+        );
+        return;
       case "dash_stats":
         await this.sendMenu(chatId, formatWinLossStats(state, settings), mainMenuKeyboard(true));
         return;

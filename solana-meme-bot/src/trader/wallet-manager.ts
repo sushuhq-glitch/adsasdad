@@ -33,11 +33,16 @@ export class WalletManager {
 
   async getSolBalance(): Promise<number | null> {
     if (!this.keypair) return null;
+    return this.getSolBalanceForAddress(this.keypair.publicKey.toBase58());
+  }
+
+  async getSolBalanceForAddress(address: string): Promise<number | null> {
     try {
-      const lamports = await this.connection.getBalance(this.keypair.publicKey);
+      const pubkey = new PublicKey(address);
+      const lamports = await this.connection.getBalance(pubkey);
       return lamports / LAMPORTS_PER_SOL;
     } catch (err) {
-      logger.warn({ err }, "Impossibile leggere balance SOL");
+      logger.warn({ err, address }, "Impossibile leggere balance SOL");
       return null;
     }
   }

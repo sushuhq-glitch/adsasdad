@@ -20,6 +20,7 @@ import { formatWalletsPanel } from "./telegram/dashboard.js";
 import {
   formatCloseAllReport,
   formatProfitAllReport,
+  formatBalanceReport,
   summarizeTrades,
 } from "./telegram/reports.js";
 import { PositionManager } from "./trader/position-manager.js";
@@ -318,6 +319,33 @@ export class BotController {
       sessionWinRate: session.winRate,
       windows,
       solUsd,
+    });
+  }
+
+  async buildBalanceReport(): Promise<string> {
+    const settings = this.telegram.getSettings();
+    const solUsd = settings.solUsd || 150;
+    const openPositionsSol = this.state.openPositions.reduce((a, p) => a + p.amountSol, 0);
+    const addr = settings.solanaAddress || this.wallet.getPublicKey() || null;
+    let onChainSol: number | null = null;
+    if (addr) {
+      onChainSol = await this.wallet.getSolBalanceForAddress(addr);
+    } else {
+      onChainSol = await this.wallet.getSolBalance();
+    }
+    const mode = `${this.state.tradingMode}${this.config.DRY_RUN ? " dry-run" : ""}`;
+    return formatBalanceReport({
+      mode,
+      budgetSol: this.state.budgetSol,
+      residualSol: this.state.residualBudgetSol,
+      openPositionsSol,
+      unrealizedPnlSol: this.state.unrealizedPnlSol,
+      realizedPnlSol: this.state.realizedPnlSol,
+      sessionPnlSol: this.state.sessionRealizedPnlSol,
+      openCount: this.state.openPositions.length,
+      solUsd,
+      onChainSol,
+      walletAddress: addr,
     });
   }
 
@@ -706,6 +734,8 @@ export class BotController {
         return this.closeAllAndReset();
       case "profitall":
         return this.buildProfitAllReport();
+      case "balance":
+        return this.buildBalanceReport();
       case "status":
         this.refreshAverageRisk();
         return [
