@@ -13,6 +13,8 @@ export type TelegramCommand =
   | { type: "wallet_remove"; address: string }
   | { type: "wallet_list" }
   | { type: "wallet_refresh" }
+  | { type: "closeall" }
+  | { type: "profitall" }
   | { type: "help" }
   | { type: "start" }
   | { type: "unknown"; raw: string };
@@ -43,6 +45,8 @@ export function parseTelegramCommand(text: string): TelegramCommand {
   if (c === "/dashboard" || c === "dashboard" || c === "/panel" || c === "panel") {
     return { type: "dashboard" };
   }
+  if (c === "/closeall" || c === "closeall") return { type: "closeall" };
+  if (c === "/profitall" || c === "profitall") return { type: "profitall" };
   if (c === "/pause" || c === "pause") return { type: "pause", reason: body || undefined };
   if (c === "/resume" || c === "resume") return { type: "resume" };
   if (c === "/status" || c === "status") return { type: "status" };
@@ -66,7 +70,6 @@ export function parseTelegramCommand(text: string): TelegramCommand {
     if ((a === "remove" || a === "del" || a === "rm") && b) {
       return { type: "wallet_remove", address: b };
     }
-    // /wallet <address> [label] → add
     if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a)) {
       return { type: "wallet_add", address: a, label: [b, ...more].filter(Boolean).join(" ") || undefined };
     }
@@ -89,12 +92,12 @@ export function parseTelegramCommand(text: string): TelegramCommand {
 
 export const HELP_TEXT = [
   "📟 <b>FOMO Mirror Copy Trading</b>",
-  "/start — onboarding (API Key + budget fisso) / menu",
+  "/start — onboarding obbligatorio (API Key + budget)",
   "/setup — rifai setup",
-  "/menu — posizioni live · win/loss · settings",
-  "/wallets list — target Fomo tracciati",
-  "/wallets add &lt;address&gt; [label]",
-  "/wallets refresh — ricarica leaderboard Fomo",
-  "/pause · /resume · /budget &lt;SOL&gt; (portfolio)",
+  "/menu — posizioni live · stats · settings",
+  "/profitall — PnL sessione + 24h / 3d / 7d / 30d",
+  "/closeall — liquida tutto + reset sessione Fomo",
+  "/wallets list · /wallets refresh",
+  "/pause · /resume · /budget &lt;SOL&gt;",
   "/help",
 ].join("\n");

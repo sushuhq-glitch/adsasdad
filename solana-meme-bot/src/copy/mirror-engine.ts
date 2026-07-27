@@ -42,6 +42,10 @@ export class MirrorEngine {
   }
 
   async handleSignal(signal: MirrorSignal): Promise<void> {
+    if (!this.state.copySessionActive) {
+      await this.cbs.onSkip("Sessione Fomo non attiva — completa /start", signal);
+      return;
+    }
     if (this.state.status === "paused" || this.state.status === "stopped") {
       await this.cbs.onSkip(`Bot ${this.state.status}`, signal);
       return;
@@ -135,6 +139,7 @@ export class MirrorEngine {
         riskPct: risk.riskPct,
         riskBand: risk.band,
         highProfitPotential: risk.band === "high",
+        solUsd: 150,
       },
     );
     position.copyFromAddress = signal.wallet.address;

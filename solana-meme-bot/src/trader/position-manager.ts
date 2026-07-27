@@ -1,7 +1,7 @@
 import type { AppConfig } from "../config/schema.js";
 import type { ClosedTrade, Position, RiskBand, TokenCandidate } from "../types/index.js";
 import { logger } from "../lib/logger.js";
-import { nowIso, pctChange, uid } from "../lib/money.js";
+import { computeEntryPriceUsd, nowIso, pctChange, uid } from "../lib/money.js";
 import { LivePriceOracle, simulateDemoExitPrice } from "./live-price.js";
 import type { ExecutionRouter } from "./venue-adapter.js";
 
@@ -28,6 +28,11 @@ export class PositionManager {
     return Math.min(bps, 800);
   }
 
+  /**
+   * Apre posizione con entryPrice fisso:
+   * (sol_investiti × SOL/USD) / token_ricevuti, oppure mark live all'istante del fill.
+   * L'entry NON viene mai ricalcolato in seguito (peak/sell usano altri campi).
+   */
   openFromFill(
     candidate: TokenCandidate,
     amountSol: number,
@@ -39,18 +44,21 @@ export class PositionManager {
       riskPct: number;
       riskBand: RiskBand;
       highProfitPotential: boolean;
+      solUsd?: number;
     },
   ): Position {
+    const solUsd = opts.solUsd && opts.solUsd > 0 ? opts.solUsd : 150;
+    const entryPriceUsd = computeEntryPriceUsd(amountSol, tokenAmount, solUsd, fillPrice);
     const takeProfitPct = opts.highProfitPotential
       ? this.config.MOONSHOT_TAKE_PROFIT_PCT
       : this.config.TAKE_PROFIT_PCT;
-    return {
+    const position: Position = {
       id: uid("pos"),
       mint: candidate.mint,
       symbol: candidate.symbol,
       name: candidate.name,
       venue,
-      entryPriceUsd: fillPrice,
+      entryPriceUsd,
       amountSol,
       tokenAmount,
       marketCapAtEntry: candidate.marketCapUsd,
@@ -59,15 +67,24 @@ export class PositionManager {
       takeProfitPct,
       stopLossPct: this.config.STOP_LOSS_PCT,
       trailingStopPct: this.config.TRAILING_STOP_PCT,
-      peakPriceUsd: fillPrice,
+      peakPriceUsd: entryPriceUsd,
       status: "open",
       riskPct: opts.riskPct,
       riskBand: opts.riskBand,
       highProfitPotential: opts.highProfitPotential,
     };
+    // Blocca entryPrice contro overwrite accidentali
+    Object.defineProperty(position, "entryPriceUsd", {
+      value: entryPriceUsd,
+      writable: false,
+      configurable: false,
+      enumerable: true,
+    });
+    return position;
   }
 
   updatePeak(position: Position, markPrice: number): void {
+    // Mai toccare entryPriceUsd — solo peak
     if (markPrice > position.peakPriceUsd) position.peakPriceUsd = markPrice;
   }
 

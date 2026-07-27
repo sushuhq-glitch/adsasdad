@@ -17,6 +17,11 @@ import { MarketScanner } from "./scrapers/market-scanner.js";
 import { TelegramService } from "./telegram/bot.js";
 import type { TelegramCommand } from "./telegram/commands.js";
 import { formatWalletsPanel } from "./telegram/dashboard.js";
+import {
+  formatCloseAllReport,
+  formatProfitAllReport,
+  summarizeTrades,
+} from "./telegram/reports.js";
 import { PositionManager } from "./trader/position-manager.js";
 import { buildExecutionRouter, type ExecutionRouter } from "./trader/venue-adapter.js";
 import { WalletManager } from "./trader/wallet-manager.js";
@@ -111,6 +116,7 @@ export class BotController {
       onCopySell: async (trade, _signal, latencyNote) => {
         this.state.mirrorSells += 1;
         this.state.lastMirrorAt = nowIso();
+        this.state.sessionRealizedPnlSol += trade.pnlSol;
         trade.copyLatencyNote = latencyNote;
         await this.telegram.notifySell(trade);
         await this.alerts.push({
@@ -145,11 +151,33 @@ export class BotController {
   }
 
   /** Applica budget fisso / API key / target usernames dalle settings Telegram */
-  applyUserSettings(settings: { fixedTradeSol: number; fomoApiKey: string; fomoUsernames: string[]; solUsd: number }): void {
+  applyUserSettings(settings: {
+    fixedTradeSol: number;
+    fomoApiKey: string;
+    fomoUsernames: string[];
+    solUsd: number;
+    onboarded?: boolean;
+    fomoAuthenticated?: boolean;
+    sessionStartedAt?: string | null;
+  }): void {
     this.config.COPY_TRADE_SOL = settings.fixedTradeSol;
     if (settings.fomoApiKey) {
       this.config.FOMO_API_KEY = settings.fomoApiKey;
       process.env.FOMO_API_KEY = settings.fomoApiKey;
+    } else {
+      this.config.FOMO_API_KEY = "";
+    }
+    this.state.copySessionActive = Boolean(settings.onboarded);
+    if (settings.onboarded) {
+      const started = settings.sessionStartedAt ?? this.state.sessionStartedAt ?? nowIso();
+      if (!this.state.sessionStartedAt) {
+        this.state.sessionStartedAt = started;
+      } else if (settings.sessionStartedAt && settings.sessionStartedAt !== this.state.sessionStartedAt) {
+        this.state.sessionStartedAt = settings.sessionStartedAt;
+        this.state.sessionRealizedPnlSol = 0;
+      }
+    } else {
+      this.state.copySessionActive = false;
     }
     this.registry.enableOnlyUsernames(settings.fomoUsernames);
     this.demoFeed?.setTargetUsernames(settings.fomoUsernames);
@@ -157,6 +185,7 @@ export class BotController {
       {
         tradeSol: settings.fixedTradeSol,
         targets: settings.fomoUsernames,
+        session: this.state.copySessionActive,
         hasApiKey: Boolean(settings.fomoApiKey),
       },
       "User settings applicate al controller",
@@ -192,6 +221,104 @@ export class BotController {
       rows.push({ position, livePriceUsd, liveMarketCapUsd, pnlPct, pnlSol });
     }
     return rows;
+  }
+
+  /** Liquida tutte le posizioni al prezzo live e resetta la sessione Fomo. */
+  async closeAllAndReset(): Promise<string> {
+    const settings = this.telegram.getSettings();
+    const solUsd = settings.solUsd || 150;
+    const symbols: string[] = [];
+    let liquidationPnl = 0;
+
+    for (const position of [...this.state.openPositions]) {
+      const lockedEntry = position.entryPriceUsd;
+      const { trade, orderOk, error } = await this.positions.closePosition(
+        position,
+        undefined,
+        "manual",
+        solUsd,
+      );
+      // Garantisce che l'entry nello storico sia quello originale bloccato
+      trade.position.entryPriceUsd = lockedEntry;
+      if (!orderOk) {
+        logger.warn({ mint: position.mint, error }, "closeall: sell fallito");
+        continue;
+      }
+      symbols.push(position.symbol);
+      liquidationPnl += trade.pnlSol;
+      this.state.closedTrades.unshift(trade);
+      this.state.realizedPnlSol += trade.pnlSol;
+      this.state.sessionRealizedPnlSol += trade.pnlSol;
+      this.state.residualBudgetSol += position.amountSol + trade.pnlSol;
+    }
+
+    this.state.openPositions = [];
+    this.state.unrealizedPnlSol = 0;
+    this.mirror?.reindex();
+
+    const sessionPnl = this.state.sessionRealizedPnlSol;
+    await this.telegram.settingsStore.resetSession();
+    this.state.copySessionActive = false;
+    this.state.sessionStartedAt = null;
+    this.state.sessionRealizedPnlSol = 0;
+    this.state.status = "paused";
+    this.state.pauseReason = "Sessione resettata con /closeall — invia /start";
+    this.config.FOMO_API_KEY = "";
+    process.env.FOMO_API_KEY = "";
+    await this.persist();
+
+    logger.info(
+      { symbols, liquidationPnl, sessionPnl },
+      "closeall: liquidazione e reset sessione",
+    );
+    return formatCloseAllReport({
+      symbols,
+      pnlSol: sessionPnl,
+      solUsd,
+    });
+  }
+
+  /** Report PnL sessione + finestre 24h / 3d / 7d / 30d */
+  buildProfitAllReport(): string {
+    const settings = this.telegram.getSettings();
+    const solUsd = settings.solUsd || 150;
+    const sessionStart = this.state.sessionStartedAt
+      ? Date.parse(this.state.sessionStartedAt)
+      : Date.now();
+    const sessionTrades = this.state.closedTrades.filter((t) => Date.parse(t.closedAt) >= sessionStart);
+    const session = summarizeTrades(sessionTrades);
+    // Preferisci contatore runtime se allineato
+    const sessionPnlSol =
+      this.state.copySessionActive && this.state.sessionRealizedPnlSol !== 0
+        ? this.state.sessionRealizedPnlSol
+        : session.pnlSol;
+
+    const now = Date.now();
+    const windows = [
+      { label: "⏱️ 24 Ore", ms: 24 * 3_600_000 },
+      { label: "🗓️ 3 Giorni", ms: 3 * 24 * 3_600_000 },
+      { label: "📅 1 Settimana", ms: 7 * 24 * 3_600_000 },
+      { label: "🗓️ 1 Mese", ms: 30 * 24 * 3_600_000 },
+    ].map((w) => {
+      const trades = this.state.closedTrades.filter((t) => now - Date.parse(t.closedAt) <= w.ms);
+      const s = summarizeTrades(trades);
+      return {
+        label: w.label,
+        pnlSol: s.pnlSol,
+        wins: s.wins,
+        losses: s.losses,
+        winRate: s.winRate,
+      };
+    });
+
+    return formatProfitAllReport({
+      sessionPnlSol,
+      sessionWins: session.wins,
+      sessionLosses: session.losses,
+      sessionWinRate: session.winRate,
+      windows,
+      solUsd,
+    });
   }
 
   async start(): Promise<void> {
@@ -451,6 +578,7 @@ export class BotController {
         riskPct: decision.assessment.risk.riskPct,
         riskBand: decision.assessment.risk.band,
         highProfitPotential: Boolean(decision.highProfitPotential),
+        solUsd: this.telegram.getSettings().solUsd || 150,
       },
     );
     this.state.openPositions.push(position);
@@ -509,6 +637,7 @@ export class BotController {
       this.state.closedTrades.unshift(trade);
       this.state.closedTrades = this.state.closedTrades.slice(0, 200);
       this.state.realizedPnlSol += trade.pnlSol;
+      this.state.sessionRealizedPnlSol += trade.pnlSol;
       this.state.residualBudgetSol += position.amountSol + trade.pnlSol;
       if (trade.pnlSol < 0) this.dailyLossSol += Math.abs(trade.pnlSol);
       await this.telegram.notifySell(trade);
@@ -573,15 +702,20 @@ export class BotController {
       case "wallet_refresh":
         await this.refreshLeaderboard();
         return `Top FOMO PnL aggiornata: ${this.registry.list(true).length} wallet attivi`;
+      case "closeall":
+        return this.closeAllAndReset();
+      case "profitall":
+        return this.buildProfitAllReport();
       case "status":
         this.refreshAverageRisk();
         return [
           `Stato: ${this.state.status}`,
+          `Sessione: ${this.state.copySessionActive ? "attiva" : "inattiva"}`,
           `Copy: ${this.state.copyTradingEnabled ? "ON" : "OFF"}`,
           `Wallets: ${this.registry.list(true).length}`,
           `Mirror BUY/SELL: ${this.state.mirrorBuys}/${this.state.mirrorSells}`,
           `Budget: ${this.state.budgetSol} SOL · Residuo ${this.state.residualBudgetSol.toFixed(4)}`,
-          `PnL: ${this.state.realizedPnlSol.toFixed(4)} SOL`,
+          `PnL: ${this.state.realizedPnlSol.toFixed(4)} SOL · Sessione ${this.state.sessionRealizedPnlSol.toFixed(4)}`,
           `Open: ${this.state.openPositions.length}`,
           `Max risk: ${this.state.maxRiskPct}%`,
         ].join("\n");

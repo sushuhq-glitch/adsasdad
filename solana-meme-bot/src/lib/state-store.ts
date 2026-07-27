@@ -34,6 +34,9 @@ export function createInitialState(
     lastMirrorAt: null,
     mirrorBuys: 0,
     mirrorSells: 0,
+    copySessionActive: false,
+    sessionStartedAt: null,
+    sessionRealizedPnlSol: 0,
   };
 }
 

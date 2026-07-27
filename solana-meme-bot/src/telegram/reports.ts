@@ -1,5 +1,5 @@
 import type { BotRuntimeState, ClosedTrade, Position } from "../types/index.js";
-import { fmtSol, fmtUsd } from "../lib/money.js";
+import { formatPrice, fmtSol, fmtUsd } from "../lib/money.js";
 import { formatUsername, type UserBotSettings } from "./user-settings.js";
 
 export interface LivePositionRow {
@@ -10,25 +10,33 @@ export interface LivePositionRow {
   pnlSol: number;
 }
 
+export interface ProfitWindowStats {
+  label: string;
+  pnlSol: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+}
+
 export function formatOnboardingWelcome(settings: UserBotSettings): string {
   return [
     "👋 <b>Benvenuto su WEDOTHAT — FOMO Copy Trading</b>",
     "",
-    "Configuriamo il bot in 2 step:",
+    "Configuriamo il bot in 2 step <b>obbligatori</b> prima di qualsiasi operazione:",
     "1️⃣ <b>API Key / Token sessione Fomo</b>",
     "2️⃣ <b>Budget fisso per trade</b> (SOL) — usato SEMPRE, non l'amount del target",
     "",
     settings.onboarded
       ? `Stato attuale: budget <b>${settings.fixedTradeSol} SOL</b>/trade · target ${settings.fomoUsernames.map(formatUsername).join(", ")}`
-      : "Non ancora configurato.",
+      : "Sessione non attiva — setup richiesto.",
     "",
-    "Invia ora la tua <b>FOMO_API_KEY</b> (oppure <code>skip</code> per continuare in paper/demo).",
+    "Invia ora la tua <b>FOMO_API_KEY</b> (oppure <code>demo</code> per paper senza API).",
   ].join("\n");
 }
 
 export function formatAskBudget(): string {
   return [
-    "✅ API Key salvata (o saltata).",
+    "✅ Credenziali Fomo salvate.",
     "",
     "Ora invia il <b>budget fisso per ogni operazione</b> in SOL.",
     "Esempi: <code>0.15</code> · <code>0.25</code> · <code>1</code>",
@@ -39,12 +47,12 @@ export function formatAskBudget(): string {
 
 export function formatOnboardingDone(settings: UserBotSettings): string {
   return [
-    "🎯 <b>Setup completato</b>",
+    "🎯 <b>Setup completato — sessione attiva</b>",
     `• Budget/trade: <b>${settings.fixedTradeSol} SOL</b> (~${fmtUsd(settings.fixedTradeSol * settings.solUsd)})`,
-    `• Fomo API: ${settings.fomoApiKey ? "configurata" : "non impostata (paper/demo)"}`,
+    `• Fomo: ${settings.fomoAuthenticated ? "autenticato" : "demo/paper"}`,
     `• Target: ${settings.fomoUsernames.map(formatUsername).join(", ") || "—"}`,
     "",
-    "Usa i pulsanti sotto per monitorare posizioni, stats e settings.",
+    "Usa i pulsanti sotto · /closeall · /profitall",
   ].join("\n");
 }
 
@@ -64,6 +72,10 @@ export function mainMenuKeyboard(onboarded: boolean): {
       [
         { text: "📊 Posizioni aperte", callback_data: "dash_live_positions" },
         { text: "📈 Win/Loss Stats", callback_data: "dash_stats" },
+      ],
+      [
+        { text: "📈 /profitall", callback_data: "dash_profitall" },
+        { text: "🚨 /closeall", callback_data: "dash_closeall" },
       ],
       [
         { text: "👛 Target Fomo", callback_data: "dash_wallets" },
@@ -86,6 +98,7 @@ export function settingsKeyboard(): {
       [{ text: "💰 Cambia budget/trade", callback_data: "dash_set_budget" }],
       [{ text: "🔑 Cambia FOMO API Key", callback_data: "dash_set_fomo_key" }],
       [{ text: "➕ Aggiungi @username", callback_data: "dash_add_username" }],
+      [{ text: "🚨 Close all + reset", callback_data: "dash_closeall" }],
       [{ text: "⬅️ Menu", callback_data: "dash_refresh" }],
     ],
   };
@@ -110,7 +123,7 @@ export function formatLivePositionsReport(
     const sign = r.pnlPct >= 0 ? "+" : "";
     const pnlSign = r.pnlSol >= 0 ? "+" : "";
     return [
-      `<b>$${p.symbol}</b> • Entry Price: ${fmtUsd(p.entryPriceUsd, 6)} | Live Price: ${fmtUsd(r.livePriceUsd, 6)}`,
+      `<b>$${p.symbol}</b> • Entry Price: ${formatPrice(p.entryPriceUsd)} | Live Price: ${formatPrice(r.livePriceUsd)}`,
       `• Market Cap Live: ${fmtUsd(r.liveMarketCapUsd, 0)}`,
       `• PnL Corrente: <b>${sign}${r.pnlPct.toFixed(2)}%</b> ${emoji} (${pnlSign}${Math.abs(r.pnlSol).toFixed(4)} SOL)`,
       `• Target Copiato: ${target}`,
@@ -131,8 +144,8 @@ export function formatWinLossStats(state: BotRuntimeState, settings: UserBotSett
     "📈 <b>WIN/LOSS STATS GLOBALI</b>",
     `• Win Rate Totale: <b>${winRate.toFixed(0)}%</b> (${wins} Win / ${losses} Loss)`,
     `• PnL Netto Totale: <b>${fmtSol(state.realizedPnlSol)}</b>`,
+    `• Sessione corrente: <b>${fmtSol(state.sessionRealizedPnlSol)}</b>`,
     `• Unrealized (open): <b>${fmtSol(state.unrealizedPnlSol)}</b>`,
-    `• Mirror BUY/SELL: ${state.mirrorBuys}/${state.mirrorSells}`,
     `• Budget fisso/trade: <b>${settings.fixedTradeSol} SOL</b> (~${fmtUsd(settings.fixedTradeSol * settings.solUsd)})`,
     "",
     "<b>Ultime uscite</b>",
@@ -144,7 +157,7 @@ function formatRecentExits(trades: ClosedTrade[]): string[] {
   if (!trades.length) return ["• Nessuna chiusura ancora"];
   return trades.map((t) => {
     const sign = t.pnlPct >= 0 ? "+" : "";
-    return `• $${t.position.symbol} ${sign}${t.pnlPct.toFixed(1)}% · ${fmtSol(t.pnlSol)} · ${t.reason}`;
+    return `• $${t.position.symbol} ${sign}${t.pnlPct.toFixed(1)}% · ${fmtSol(t.pnlSol)} · entry ${formatPrice(t.position.entryPriceUsd)} · ${t.reason}`;
   });
 }
 
@@ -152,13 +165,83 @@ export function formatSettingsPanel(settings: UserBotSettings, state: BotRuntime
   return [
     "⚙️ <b>SETTINGS</b>",
     `• Stato bot: <b>${state.status}</b>`,
+    `• Sessione: <b>${state.copySessionActive ? "attiva" : "inattiva"}</b>`,
     `• Budget/trade: <b>${settings.fixedTradeSol} SOL</b>`,
     `• SOL/USD ref: ${settings.solUsd}`,
-    `• FOMO API Key: ${settings.fomoApiKey ? "••••" + settings.fomoApiKey.slice(-4) : "non impostata"}`,
+    `• FOMO API: ${settings.fomoAuthenticated ? "••••" + (settings.fomoApiKey.slice(-4) || "demo") : "non autenticata"}`,
     `• Target usernames: ${settings.fomoUsernames.map(formatUsername).join(", ") || "—"}`,
     "",
     "Usa i pulsanti per modificare budget, API key o lista @username.",
   ].join("\n");
+}
+
+export function formatCloseAllReport(params: {
+  symbols: string[];
+  pnlSol: number;
+  solUsd: number;
+}): string {
+  const list =
+    params.symbols.length > 0
+      ? params.symbols.map((s) => `$${s}`).join(", ")
+      : "nessuna";
+  const usd = params.pnlSol * params.solUsd;
+  const usdSign = usd >= 0 ? "+" : "-";
+  return [
+    "🚨 <b>CHIUSURA TOTALE POSIZIONI ESEGUITA (/closeall)</b>",
+    `• Posizioni Chiuse: <b>${params.symbols.length}</b> token (${escapeHtml(list)})`,
+    "• Esito Vendite: Liquidation eseguita al prezzo live.",
+    `• PnL Totale Sessione: <b>${fmtSol(params.pnlSol)}</b> (${usdSign}${fmtUsd(Math.abs(usd))})`,
+    "",
+    "🔒 <b>SISTEMA RESETTATO</b>",
+    "• Sessione Fomo terminata. Invia /start per ripartire.",
+  ].join("\n");
+}
+
+export function formatProfitAllReport(params: {
+  sessionPnlSol: number;
+  sessionWins: number;
+  sessionLosses: number;
+  sessionWinRate: number;
+  windows: ProfitWindowStats[];
+  solUsd: number;
+}): string {
+  const sUsd = params.sessionPnlSol * params.solUsd;
+  const sUsdSign = sUsd >= 0 ? "+" : "-";
+  const lines = [
+    "📈 <b>REPORT COMPLETO PROFIT &amp; LOSS (/profitall)</b>",
+    "",
+    "💰 <b>PNL SESSIONE CORRENTE</b>",
+    `• Profit/Loss Netto: <b>${fmtSol(params.sessionPnlSol)}</b> (${sUsdSign}${fmtUsd(Math.abs(sUsd))})`,
+    `• Win Rate Sessione: <b>${params.sessionWinRate.toFixed(0)}%</b> (${params.sessionWins} Win / ${params.sessionLosses} Loss)`,
+    "",
+    "🌐 <b>PNL STORICO ACCOUNT (TOTALE GLOBAL)</b>",
+  ];
+  for (const w of params.windows) {
+    const usd = w.pnlSol * params.solUsd;
+    const usdSign = usd >= 0 ? "+" : "-";
+    lines.push(
+      `• ${w.label}: <b>${fmtSol(w.pnlSol)}</b> (${usdSign}${fmtUsd(Math.abs(usd))}) | Win Rate: <b>${w.winRate.toFixed(0)}%</b>`,
+    );
+  }
+  return lines.join("\n");
+}
+
+export function summarizeTrades(trades: ClosedTrade[]): {
+  pnlSol: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+} {
+  const wins = trades.filter((t) => t.pnlSol > 0).length;
+  const losses = trades.filter((t) => t.pnlSol <= 0).length;
+  const total = wins + losses;
+  const pnlSol = trades.reduce((a, t) => a + t.pnlSol, 0);
+  return {
+    pnlSol,
+    wins,
+    losses,
+    winRate: total > 0 ? (wins / total) * 100 : 0,
+  };
 }
 
 function escapeHtml(s: string): string {

@@ -108,11 +108,12 @@ export class TelegramService {
       { command: "start", description: "Onboarding / menu FOMO Mirror" },
       { command: "setup", description: "Rifai setup API Key + budget" },
       { command: "menu", description: "Menu principale" },
+      { command: "profitall", description: "Report PnL sessione + 24h/3d/7d/30d" },
+      { command: "closeall", description: "Liquida tutto e reset sessione Fomo" },
       { command: "wallets", description: "Lista target Fomo" },
       { command: "status", description: "Stato rapido" },
       { command: "pause", description: "Pausa acquisti" },
       { command: "resume", description: "Riprendi bot" },
-      { command: "budget", description: "Cambia budget SOL portfolio" },
       { command: "help", description: "Aiuto comandi" },
     ]);
 
@@ -223,7 +224,11 @@ export class TelegramService {
 
   private async finishOnboarding(chatId: string): Promise<void> {
     this.pending.delete(chatId);
-    const settings = await this.settingsStore.save({ onboarded: true });
+    const now = new Date().toISOString();
+    const settings = await this.settingsStore.save({
+      onboarded: true,
+      sessionStartedAt: now,
+    });
     this.applyConfigFromSettings(settings);
     await this.onSettingsChanged?.(settings);
     await this.sendMenu(chatId, formatOnboardingDone(settings), mainMenuKeyboard(true));
@@ -234,13 +239,25 @@ export class TelegramService {
     if (settings.fomoApiKey) {
       this.config.FOMO_API_KEY = settings.fomoApiKey;
       process.env.FOMO_API_KEY = settings.fomoApiKey;
+    } else {
+      this.config.FOMO_API_KEY = "";
     }
   }
 
   private async handlePendingInput(chatId: string, text: string, step: PendingStep): Promise<void> {
     if (step === "await_fomo_key" || step === "edit_fomo_key") {
-      const key = text === "-" || text.toLowerCase() === "skip" ? "" : text.trim();
-      const settings = await this.settingsStore.save({ fomoApiKey: key });
+      const raw = text.trim();
+      const lower = raw.toLowerCase();
+      const isDemo = lower === "demo" || lower === "skip" || lower === "-";
+      if (!isDemo && !raw) {
+        await this.send(chatId, "API Key obbligatoria (oppure invia <code>demo</code> per paper).");
+        return;
+      }
+      const key = isDemo ? "" : raw;
+      const settings = await this.settingsStore.save({
+        fomoApiKey: key,
+        fomoAuthenticated: Boolean(key),
+      });
       this.applyConfigFromSettings(settings);
       if (step === "await_fomo_key") {
         this.pending.set(chatId, "await_budget");
@@ -248,7 +265,11 @@ export class TelegramService {
       } else {
         this.pending.delete(chatId);
         await this.onSettingsChanged?.(settings);
-        await this.sendMenu(chatId, "✅ FOMO API Key aggiornata.", settingsKeyboard());
+        await this.sendMenu(
+          chatId,
+          key ? "✅ FOMO API Key aggiornata." : "✅ Modalità demo/paper senza API Key.",
+          settingsKeyboard(),
+        );
       }
       return;
     }
@@ -326,6 +347,17 @@ export class TelegramService {
       case "dash_stats":
         await this.sendMenu(chatId, formatWinLossStats(state, settings), mainMenuKeyboard(true));
         return;
+      case "dash_profitall": {
+        const reply = await this.handler?.({ type: "profitall" }, chatId);
+        if (reply) await this.sendMenu(chatId, reply, mainMenuKeyboard(settings.onboarded));
+        return;
+      }
+      case "dash_closeall": {
+        const reply = await this.handler?.({ type: "closeall" }, chatId);
+        if (reply) await this.send(chatId, reply);
+        await this.openMainMenu(chatId);
+        return;
+      }
       case "dash_settings":
         await this.sendMenu(chatId, formatSettingsPanel(settings, state), settingsKeyboard());
         return;

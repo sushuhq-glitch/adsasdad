@@ -1,5 +1,5 @@
 import type { ClosedTrade, DecisionResult, Position, SystemAlert } from "../types/index.js";
-import { fmtSol, fmtUsd } from "../lib/money.js";
+import { formatPrice, fmtSol, fmtUsd } from "../lib/money.js";
 import { formatUsername } from "./user-settings.js";
 
 export function formatBuyMessage(decision: DecisionResult, position: Position): string {
@@ -15,7 +15,7 @@ export function formatBuyMessage(decision: DecisionResult, position: Position): 
     `• Nome: ${c.name}`,
     `• Market Cap: ${fmtUsd(c.marketCapUsd, 0)}`,
     `• Importo Investito: ${position.amountSol.toFixed(4)} SOL`,
-    `• Prezzo d'Ingresso (Entry Price): ${fmtUsd(position.entryPriceUsd, 6)}`,
+    `• Prezzo d'Ingresso (Entry Price): ${formatPrice(position.entryPriceUsd)}`,
     `• 🔥 LIVELLO DI RISCHIO TRADE: ${risk.riskPct}% (${risk.bandLabel})`,
     `• Motivazione Strategica: ${escapeHtml(decision.motivation)}`,
   ].join("\n");
@@ -39,8 +39,8 @@ export function formatSellMessage(trade: ClosedTrade): string {
   return [
     `${sign} <b>AGGIORNAMENTO CHIUSURA POSIZIONE / PnL</b>`,
     `• Token: $${trade.position.symbol}`,
-    `• Entry Price: ${fmtUsd(entry, 6)}`,
-    `• Prezzo di Uscita (Sell Price): ${fmtUsd(trade.sellPriceUsd, 6)}`,
+    `• Entry Price: ${formatPrice(entry)}`,
+    `• Prezzo di Uscita (Sell Price): ${formatPrice(trade.sellPriceUsd)}`,
     `• Variazione prezzo: <b>${movePct >= 0 ? "+" : ""}${movePct.toFixed(2)}%</b>`,
     `• ${reasonLabel[trade.reason]}: ${trade.pnlPct >= 0 ? "+" : ""}${trade.pnlPct.toFixed(2)}%`,
     `• Profit/Loss Netto: <b>${fmtSol(trade.pnlSol)}</b> (${trade.pnlUsd >= 0 ? "+" : "-"}${fmtUsd(Math.abs(trade.pnlUsd))})`,
@@ -71,7 +71,7 @@ export function formatCopyBuyMessage(params: {
     `• Market Cap (Entry): ${fmtUsd(params.marketCapUsd, 0)}`,
     `• Target Fomo: ${escapeHtml(target)}`,
     `• Budget Allocato: <b>${params.amountSol.toFixed(4)} SOL</b> (~${fmtUsd(params.amountSol * params.solUsd)})`,
-    `• Entry Price: ${fmtUsd(params.entryPriceUsd, 6)}`,
+    `• Entry Price: ${formatPrice(params.entryPriceUsd)}`,
   ].join("\n");
 }
 
@@ -85,8 +85,8 @@ export function formatCopySellMessage(trade: ClosedTrade): string {
     "⚡ <b>VENDITA IMMEDIATA ESEGUITA (COPY SELL)</b>",
     `• Token: $${trade.position.symbol} (Solana)`,
     `• Target Fomo: ${escapeHtml(wallet)}`,
-    `• Entry Price: ${fmtUsd(entry, 6)}`,
-    `• Sell Price: ${fmtUsd(exit, 6)}`,
+    `• Entry Price: ${formatPrice(entry)}`,
+    `• Sell Price: ${formatPrice(exit)}`,
     `• Variazione prezzo: <b>${movePct >= 0 ? "+" : ""}${movePct.toFixed(2)}%</b>`,
     `• Motivo: 🚨 Vendita del target Fomo — mirror immediato`,
     `${sign} Profit/Loss Netto: <b>${fmtSol(trade.pnlSol)}</b> (${trade.pnlUsd >= 0 ? "+" : "-"}${fmtUsd(Math.abs(trade.pnlUsd))}) [<b>${trade.pnlPct >= 0 ? "+" : ""}${trade.pnlPct.toFixed(2)}%</b>]`,

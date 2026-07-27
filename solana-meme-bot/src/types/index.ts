@@ -207,6 +207,10 @@ export interface BotRuntimeState {
   lastMirrorAt: string | null;
   mirrorBuys: number;
   mirrorSells: number;
+  /** Sessione FOMO attiva solo dopo onboarding completato */
+  copySessionActive: boolean;
+  sessionStartedAt: string | null;
+  sessionRealizedPnlSol: number;
 }
 
 export interface OrderRequest {
