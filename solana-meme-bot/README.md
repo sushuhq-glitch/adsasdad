@@ -38,6 +38,16 @@ npm run bot
 
 Telegram: apri `@WEDOTHATBOT` → `/start`
 
+### Token sessione Fomo (al posto di una API key pubblica)
+
+1. Apri [fomo.family](https://fomo.family) e accedi
+2. F12 (o tasto destro → Ispeziona) → scheda **Application** / Storage
+3. **Local Storage** → URL di Fomo
+4. Cerca `token` / `auth_token` / `jwt` / `session`
+5. Copia il valore e incollalo quando il bot lo chiede (oppure scrivi `demo` per paper)
+
+> Il token di sessione è sensibile come una password: non condividerlo.
+
 ### Comandi utili
 
 ```

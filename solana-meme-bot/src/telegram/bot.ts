@@ -370,7 +370,15 @@ export class TelegramService {
         return;
       case "dash_set_fomo_key":
         this.pending.set(chatId, "edit_fomo_key");
-        await this.send(chatId, "🔑 Invia la nuova <b>FOMO API Key / session token</b> (o <code>skip</code>):");
+        await this.send(
+          chatId,
+          [
+            "🔑 Invia il nuovo <b>token di sessione Fomo</b>.",
+            "",
+            "Da <a href=\"https://fomo.family\">fomo.family</a> → F12 → Application → Local Storage → cerca <code>token</code> / <code>auth_token</code> / <code>jwt</code> / <code>session</code>.",
+            "Oppure <code>demo</code> per paper.",
+          ].join("\n"),
+        );
         return;
       case "dash_add_username":
         this.pending.set(chatId, "add_username");

@@ -23,14 +23,23 @@ export function formatOnboardingWelcome(settings: UserBotSettings): string {
     "👋 <b>Benvenuto su WEDOTHAT — FOMO Copy Trading</b>",
     "",
     "Configuriamo il bot in 2 step <b>obbligatori</b> prima di qualsiasi operazione:",
-    "1️⃣ <b>API Key / Token sessione Fomo</b>",
+    "1️⃣ <b>Token di sessione Fomo</b> (da browser)",
     "2️⃣ <b>Budget fisso per trade</b> (SOL) — usato SEMPRE, non l'amount del target",
     "",
     settings.onboarded
       ? `Stato attuale: budget <b>${settings.fixedTradeSol} SOL</b>/trade · target ${settings.fomoUsernames.map(formatUsername).join(", ")}`
       : "Sessione non attiva — setup richiesto.",
     "",
-    "Invia ora la tua <b>FOMO_API_KEY</b> (oppure <code>demo</code> per paper senza API).",
+    "<b>Come prendere il token Fomo</b>",
+    "1. Apri <a href=\"https://fomo.family\">fomo.family</a> e accedi",
+    "2. Premi <b>F12</b> (o tasto destro → Ispeziona)",
+    "3. Scheda <b>Application</b> / Storage",
+    "4. Local Storage → URL di Fomo",
+    "5. Cerca <code>token</code> / <code>auth_token</code> / <code>jwt</code> / <code>session</code>",
+    "6. Copia il valore e <b>incollalo qui</b>",
+    "",
+    "⚠️ Non condividere il token con nessuno (è come una password).",
+    "Oppure invia <code>demo</code> per continuare solo in paper.",
   ].join("\n");
 }
 
