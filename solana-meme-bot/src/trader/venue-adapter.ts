@@ -3,12 +3,12 @@ import type { ExecutionVenue, OrderRequest, OrderResult } from "../types/index.j
 import { logger } from "../lib/logger.js";
 import type { ExecutionAdapter } from "./types.js";
 import { PaperExecutionAdapter } from "./paper-adapter.js";
+import { FomoLiveExecutionAdapter } from "./fomo-adapter.js";
+import { FomoTradingClient } from "../copy/fomo-trading.js";
 
 /**
  * Adapter HTTP generico per Axiom / Anthem / Pump.fun.
- * Gli endpoint reali variano e spesso richiedono auth proprietaria:
- * - in DRY_RUN / paper → nessun ordine reale
- * - in live → chiama l'API se configurata, altrimenti fallisce in sicurezza
+ * FOMO live usa FomoLiveExecutionAdapter (nessun fallback paper).
  */
 export class HttpVenueAdapter implements ExecutionAdapter {
   constructor(
@@ -17,6 +17,7 @@ export class HttpVenueAdapter implements ExecutionAdapter {
     private readonly apiKey: string,
     private readonly dryRun: boolean,
     private readonly paper: PaperExecutionAdapter,
+    private readonly allowPaperFallback: boolean,
   ) {}
 
   async healthCheck(): Promise<{ ok: boolean; message?: string }> {
@@ -46,6 +47,17 @@ export class HttpVenueAdapter implements ExecutionAdapter {
 
   async placeOrder(req: OrderRequest, markPriceUsd: number): Promise<OrderResult> {
     if (this.dryRun || (this.venue !== "pumpfun" && !this.apiKey)) {
+      if (!this.allowPaperFallback) {
+        return {
+          ok: false,
+          venue: this.venue,
+          filledPriceUsd: 0,
+          filledAmountSol: 0,
+          filledTokenAmount: 0,
+          simulated: false,
+          error: `${this.venue}: dry-run/key mancante — paper fallback disabilitato in REAL mode`,
+        };
+      }
       logger.warn({ venue: this.venue }, "Ordine dirottato su paper (dry-run o key mancante)");
       return this.paper.placeOrder({ ...req, venue: "paper" }, markPriceUsd);
     }
@@ -108,19 +120,42 @@ export class HttpVenueAdapter implements ExecutionAdapter {
   }
 }
 
-export function buildExecutionRouter(config: AppConfig): ExecutionRouter {
+export function buildExecutionRouter(
+  config: AppConfig,
+  opts?: {
+    fomoClient?: FomoTradingClient;
+    getFomoApiKey?: () => string;
+    getSolUsd?: () => number;
+  },
+): ExecutionRouter {
   const paper = new PaperExecutionAdapter();
-  const dry = config.DRY_RUN || config.TRADING_MODE === "paper";
+  const isPaper = config.TRADING_MODE === "paper" || config.DRY_RUN;
+  const fomoClient = opts?.fomoClient ?? new FomoTradingClient({ apiBase: config.FOMO_API_BASE });
+  const getKey = opts?.getFomoApiKey ?? (() => config.FOMO_API_KEY);
+  const getSolUsd = opts?.getSolUsd ?? (() => 150);
+
+  const fomoAdapter: ExecutionAdapter = isPaper
+    ? new HttpVenueAdapter("fomo", config.FOMO_API_BASE, config.FOMO_API_KEY, true, paper, true)
+    : new FomoLiveExecutionAdapter(fomoClient, getKey, getSolUsd);
+
   return new ExecutionRouter(config, paper, {
-    axiom: new HttpVenueAdapter("axiom", config.AXIOM_API_BASE, config.AXIOM_API_KEY, dry, paper),
-    anthem: new HttpVenueAdapter("anthem", config.ANTHEM_API_BASE, config.ANTHEM_API_KEY, dry, paper),
-    fomo: new HttpVenueAdapter("fomo", config.FOMO_API_BASE, config.FOMO_API_KEY, dry, paper),
+    axiom: new HttpVenueAdapter("axiom", config.AXIOM_API_BASE, config.AXIOM_API_KEY, isPaper, paper, isPaper),
+    anthem: new HttpVenueAdapter(
+      "anthem",
+      config.ANTHEM_API_BASE,
+      config.ANTHEM_API_KEY,
+      isPaper,
+      paper,
+      isPaper,
+    ),
+    fomo: fomoAdapter,
     pumpfun: new HttpVenueAdapter(
       "pumpfun",
       config.PUMPFUN_API_BASE,
       config.PUMPFUN_API_KEY,
-      dry,
+      isPaper,
       paper,
+      isPaper,
     ),
     paper,
   });
@@ -133,9 +168,14 @@ export class ExecutionRouter {
     private readonly adapters: Record<ExecutionVenue, ExecutionAdapter>,
   ) {}
 
+  /** Aggiorna adapter FOMO live (dopo onboarding REAL). */
+  setAdapter(venue: ExecutionVenue, adapter: ExecutionAdapter): void {
+    this.adapters[venue] = adapter;
+  }
+
   preferred(): ExecutionAdapter {
     if (this.config.TRADING_MODE === "paper" || this.config.DRY_RUN) return this.paper;
-    return this.adapters[this.config.PREFERRED_EXECUTION_VENUE] ?? this.paper;
+    return this.adapters[this.config.PREFERRED_EXECUTION_VENUE] ?? this.adapters.fomo;
   }
 
   async healthAll() {

@@ -20,46 +20,88 @@ export interface ProfitWindowStats {
 
 export function formatOnboardingWelcome(settings: UserBotSettings): string {
   return [
-    "👋 <b>Benvenuto su WEDOTHAT — FOMO Copy Trading</b>",
+    "👋 <b>WEDOTHAT — FOMO REAL COPY TRADING</b>",
     "",
-    "Configuriamo il bot in 2 step <b>obbligatori</b>:",
-    "1️⃣ <b>Token sessione Fomo</b> (= chiave <code>privy:token</code> dal browser)",
-    "2️⃣ <b>Budget fisso per trade</b> (SOL)",
+    "Il bot opera in <b>REAL TRADING</b> direttamente sul tuo account Fomo.",
+    "Setup obbligatorio in 2 step:",
+    "1️⃣ <b>FOMO API Key</b> (= <code>privy:token</code> dal browser, già loggato)",
+    "2️⃣ <b>Budget fisso per trade</b> (SOL) — verificato contro il saldo reale",
     "",
     settings.onboarded
-      ? `Stato attuale: budget <b>${settings.fixedTradeSol} SOL</b>/trade · target ${settings.fomoUsernames.map(formatUsername).join(", ")}`
+      ? `Sessione attiva: budget <b>${settings.fixedTradeSol} SOL</b>/trade · target ${settings.fomoUsernames.map(formatUsername).join(", ")}`
       : "Sessione non attiva — setup richiesto.",
     "",
-    "🔐 <b>Come copiare privy:token</b> (sei già loggato con Google su Fomo):",
-    "1. Su <a href=\"https://fomo.family\">fomo.family</a> premi <b>F12</b> → scheda <b>Console</b>",
-    "2. Incolla questo comando e premi Invio:",
+    "🔐 <b>Come copiare la FOMO API Key</b>:",
+    "1. Su <a href=\"https://fomo.family\">fomo.family</a> premi <b>F12</b> → <b>Console</b>",
+    "2. Incolla e Invio:",
     "<code>copy(JSON.parse(localStorage.getItem('privy:token')))</code>",
-    "3. Il token è negli appunti → <b>incollalo qui</b> su Telegram",
+    "3. Incolla qui su Telegram il token (<code>eyJ...</code>)",
     "",
-    "⚠️ Non condividere il token (né password Google). Non chiederemo mai email/password.",
-    "Oppure invia <code>demo</code> per paper senza sessione.",
+    "⚠️ Non condividere il token. La modalità demo è disabilitata.",
   ].join("\n");
 }
 
-export function formatAskBudget(): string {
-  return [
-    "✅ Sessione Fomo collegata (<code>privy:token</code>).",
+export function formatAskBudget(availableSol?: number, solUsd = 150): string {
+  const lines = [
+    "✅ FOMO API Key ricevuta — recupero saldo reale…",
     "",
+  ];
+  if (availableSol != null && Number.isFinite(availableSol)) {
+    lines.push(
+      `💳 <b>Saldo disponibile reale:</b> ${availableSol.toFixed(4)} SOL (~${fmtUsd(availableSol * solUsd)})`,
+      "",
+    );
+  }
+  lines.push(
     "Ora invia il <b>budget fisso per ogni operazione</b> in SOL.",
     "Esempi: <code>0.15</code> · <code>0.25</code> · <code>1</code>",
     "",
-    "Questo importo verrà usato su <b>ogni COPY BUY</b>, indipendentemente da quanto compra il target Fomo.",
-  ].join("\n");
+    "Questo importo verrà usato su <b>ogni COPY BUY REALE</b> sul tuo account Fomo.",
+    "Se il budget &gt; saldo disponibile, l'operatività verrà bloccata.",
+  );
+  return lines.join("\n");
+}
+
+export function formatRealConnected(params: {
+  availableSol: number;
+  budgetSol: number;
+  solUsd: number;
+  handle?: string;
+}): string {
+  const trades =
+    params.budgetSol > 0 ? Math.floor(params.availableSol / params.budgetSol + 1e-9) : 0;
+  const ok = params.availableSol + 1e-9 >= params.budgetSol;
+  return [
+    "✅ <b>CONNESSO A FOMO (REAL TRADING ACCOUNT)</b>",
+    params.handle ? `• Handle: <b>@${escapeHtml(params.handle)}</b>` : "",
+    `💳 Saldo Disponibile Reale: <b>${params.availableSol.toFixed(4)} SOL</b> (~${fmtUsd(params.availableSol * params.solUsd)})`,
+    `⚙️ Budget Impostato per Trade: <b>${params.budgetSol.toFixed(4)} SOL</b>`,
+    ok
+      ? `Status Solvibilità: OK 🟢 (Copertura per ${trades} trade)`
+      : "Status Solvibilità: BLOCCATO 🔴 (budget &gt; saldo)",
+    "",
+    "⚠️ NOTA: I dati della modalità Demo sono stati eliminati.",
+    "Il bot è ora in ascolto sulla Leaderboard Fomo ed eseguirà <b>TRANSAZIONI REALI</b> sul tuo account.",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function formatOnboardingDone(settings: UserBotSettings): string {
+  return formatRealConnected({
+    availableSol: settings.lastKnownAvailableSol ?? 0,
+    budgetSol: settings.fixedTradeSol,
+    solUsd: settings.solUsd,
+  });
+}
+
+export function formatInsolvent(budgetSol: number, availableSol: number, solUsd: number): string {
   return [
-    "🎯 <b>Setup completato — sessione attiva</b>",
-    `• Budget/trade: <b>${settings.fixedTradeSol} SOL</b> (~${fmtUsd(settings.fixedTradeSol * settings.solUsd)})`,
-    `• Fomo: ${settings.fomoAuthenticated ? "autenticato" : "demo/paper"}`,
-    `• Target: ${settings.fomoUsernames.map(formatUsername).join(", ") || "—"}`,
+    "🛑 <b>OPERATIVITÀ BLOCCATA — SALDO INSUFFICIENTE</b>",
+    `• Budget richiesto: <b>${budgetSol.toFixed(4)} SOL</b> (~${fmtUsd(budgetSol * solUsd)})`,
+    `• Saldo Fomo reale: <b>${availableSol.toFixed(4)} SOL</b> (~${fmtUsd(availableSol * solUsd)})`,
     "",
-    "Usa i pulsanti sotto · /closeall · /profitall",
+    "Riduci il budget oppure deposita fondi su Fomo, poi reinviarlo qui.",
   ].join("\n");
 }
 
@@ -106,7 +148,7 @@ export function settingsKeyboard(): {
   return {
     inline_keyboard: [
       [{ text: "💰 Cambia budget/trade", callback_data: "dash_set_budget" }],
-      [{ text: "🔑 Cambia sessione Fomo (privy:token)", callback_data: "dash_set_fomo_key" }],
+      [{ text: "🔑 Cambia FOMO API Key", callback_data: "dash_set_fomo_key" }],
       [{ text: "🏦 Imposta wallet Solana", callback_data: "dash_set_wallet" }],
       [{ text: "➕ Aggiungi @username", callback_data: "dash_add_username" }],
       [{ text: "🚨 Close all + reset", callback_data: "dash_closeall" }],
@@ -131,6 +173,7 @@ export function formatBalanceReport(params: {
     ok: boolean;
     handle?: string;
     cashUsd?: number;
+    availableSol?: number;
     portfolioUsd?: number;
     positionsUsd?: number;
     positionsCount?: number;
@@ -138,15 +181,22 @@ export function formatBalanceReport(params: {
     error?: string;
   } | null;
 }): string {
-  const equity = params.residualSol + params.openPositionsSol + params.unrealizedPnlSol;
-  const lines: string[] = ["💰 <b>BALANCE</b>", `• Mode: <b>${escapeHtml(params.mode)}</b>`, ""];
+  const lines: string[] = [
+    "💰 <b>BALANCE — REAL FOMO</b>",
+    `• Mode: <b>${escapeHtml(params.mode)}</b>`,
+    "",
+  ];
 
-  // FOMO account first — what the user asked for
-  lines.push("🟣 <b>Account FOMO</b>");
+  lines.push("🟣 <b>Real Fomo Balance</b>");
   if (params.fomo?.ok) {
     if (params.fomo.handle) lines.push(`• Handle: <b>@${escapeHtml(params.fomo.handle)}</b>`);
+    if (params.fomo.availableSol != null) {
+      lines.push(
+        `• Disponibile: <b>${params.fomo.availableSol.toFixed(4)} SOL</b> (~${fmtUsd(params.fomo.availableSol * params.solUsd)})`,
+      );
+    }
     if (params.fomo.cashUsd != null) {
-      lines.push(`• Cash disponibile: <b>${fmtUsd(params.fomo.cashUsd)}</b>`);
+      lines.push(`• Cash USD: <b>${fmtUsd(params.fomo.cashUsd)}</b>`);
     }
     if (params.fomo.positionsUsd != null) {
       lines.push(
@@ -158,13 +208,6 @@ export function formatBalanceReport(params: {
     if (params.fomo.portfolioUsd != null) {
       lines.push(`• Portfolio totale: <b>${fmtUsd(params.fomo.portfolioUsd)}</b>`);
     }
-    if (
-      params.fomo.cashUsd == null &&
-      params.fomo.portfolioUsd == null &&
-      params.fomo.positionsUsd == null
-    ) {
-      lines.push("• Profilo OK, ma FOMO non ha esposto i campi cash in questo payload.");
-    }
     if (params.fomo.solanaAddress) {
       const a = params.fomo.solanaAddress;
       lines.push(`• Wallet FOMO Solana: <code>${escapeHtml(a.slice(0, 4))}…${escapeHtml(a.slice(-4))}</code>`);
@@ -172,39 +215,27 @@ export function formatBalanceReport(params: {
   } else {
     lines.push(
       `• ${escapeHtml(params.fomo?.error || "Sessione FOMO non disponibile")}`,
-      "• Aggiorna <code>privy:token</code> da /start se scaduto.",
+      "• Aggiorna FOMO API Key da /start se scaduta.",
     );
   }
 
   lines.push(
     "",
-    "<b>Bot paper (copy)</b>",
-    `• Budget totale: <b>${params.budgetSol.toFixed(4)} SOL</b> (~${fmtUsd(params.budgetSol * params.solUsd)})`,
-    `• Disponibile (cash): <b>${params.residualSol.toFixed(4)} SOL</b>`,
-    `• In posizioni aperte: <b>${params.openPositionsSol.toFixed(4)} SOL</b> (${params.openCount} token)`,
+    "<b>Sessione copy REAL</b>",
+    `• Budget/trade: <b>${params.budgetSol.toFixed(4)} SOL</b>`,
+    `• Residuo sessione: <b>${params.residualSol.toFixed(4)} SOL</b>`,
+    `• In posizioni aperte: <b>${params.openPositionsSol.toFixed(4)} SOL</b> (${params.openCount})`,
     `• Unrealized PnL: <b>${fmtSol(params.unrealizedPnlSol)}</b>`,
-    `• Equity stimata: <b>${equity.toFixed(4)} SOL</b> (~${fmtUsd(equity * params.solUsd)})`,
-    `• PnL realizzato: <b>${fmtSol(params.realizedPnlSol)}</b>`,
-    `• PnL sessione: <b>${fmtSol(params.sessionPnlSol)}</b>`,
-    "",
-    "<b>On-chain Solana</b>",
+    `• PnL realizzato sessione: <b>${fmtSol(params.sessionPnlSol)}</b>`,
+    `• PnL realizzato totale: <b>${fmtSol(params.realizedPnlSol)}</b>`,
   );
 
-  const addr = params.walletAddress || params.fomo?.solanaAddress || null;
-  if (addr && params.onChainSol != null) {
+  if (params.walletAddress && params.onChainSol != null) {
     lines.push(
-      `• Wallet: <code>${escapeHtml(addr.slice(0, 4))}…${escapeHtml(addr.slice(-4))}</code>`,
-      `• Balance live: <b>${params.onChainSol.toFixed(4)} SOL</b> (~${fmtUsd(params.onChainSol * params.solUsd)})`,
-    );
-  } else if (addr) {
-    lines.push(
-      `• Wallet: <code>${escapeHtml(addr.slice(0, 4))}…${escapeHtml(addr.slice(-4))}</code>`,
-      "• Balance live: non leggibile (RPC error)",
-    );
-  } else {
-    lines.push(
-      "• Nessun wallet collegato.",
-      "• ⚙️ Settings → <b>Imposta wallet Solana</b> (address pubblico Fomo).",
+      "",
+      "<b>On-chain Solana (lettura)</b>",
+      `• Wallet: <code>${escapeHtml(params.walletAddress.slice(0, 4))}…${escapeHtml(params.walletAddress.slice(-4))}</code>`,
+      `• Balance: <b>${params.onChainSol.toFixed(4)} SOL</b>`,
     );
   }
   return lines.join("\n");
@@ -311,18 +342,28 @@ export function formatProfitAllReport(params: {
   sessionWinRate: number;
   windows: ProfitWindowStats[];
   solUsd: number;
+  realFomoBalanceSol?: number | null;
 }): string {
   const sUsd = params.sessionPnlSol * params.solUsd;
   const sUsdSign = sUsd >= 0 ? "+" : "-";
   const lines = [
-    "📈 <b>REPORT COMPLETO PROFIT &amp; LOSS (/profitall)</b>",
+    "📈 <b>REPORT COMPLETO — DATI REALI FOMO (/profitall)</b>",
     "",
-    "💰 <b>PNL SESSIONE CORRENTE</b>",
+  ];
+  if (params.realFomoBalanceSol != null) {
+    lines.push(
+      "💳 <b>REAL FOMO BALANCE</b>",
+      `• Estratto in live: <b>${params.realFomoBalanceSol.toFixed(4)} SOL</b> (~${fmtUsd(params.realFomoBalanceSol * params.solUsd)})`,
+      "",
+    );
+  }
+  lines.push(
+    "💰 <b>PNL SESSIONE CORRENTE (trade REALI)</b>",
     `• Profit/Loss Netto: <b>${fmtSol(params.sessionPnlSol)}</b> (${sUsdSign}${fmtUsd(Math.abs(sUsd))})`,
     `• Win Rate Sessione: <b>${params.sessionWinRate.toFixed(0)}%</b> (${params.sessionWins} Win / ${params.sessionLosses} Loss)`,
     "",
-    "🌐 <b>PNL STORICO ACCOUNT (TOTALE GLOBAL)</b>",
-  ];
+    "🌐 <b>PNL STORICO TRADE REALI</b>",
+  );
   for (const w of params.windows) {
     const usd = w.pnlSol * params.solUsd;
     const usdSign = usd >= 0 ? "+" : "-";

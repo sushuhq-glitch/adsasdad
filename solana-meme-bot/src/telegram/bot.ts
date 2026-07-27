@@ -24,9 +24,10 @@ import {
 } from "./formatter.js";
 import {
   formatAskBudget,
+  formatInsolvent,
   formatLivePositionsReport,
-  formatOnboardingDone,
   formatOnboardingWelcome,
+  formatRealConnected,
   formatSettingsPanel,
   formatWinLossStats,
   mainMenuKeyboard,
@@ -38,12 +39,15 @@ import {
   UserSettingsStore,
   type UserBotSettings,
 } from "./user-settings.js";
+import { FomoTradingClient } from "../copy/fomo-trading.js";
 
 export type CommandHandler = (cmd: TelegramCommand, chatId: string) => Promise<string | void>;
 export type StateProvider = () => BotRuntimeState;
 export type ModeLabelProvider = () => string;
 export type LivePositionsProvider = () => Promise<LivePositionRow[]>;
 export type SettingsChangedHandler = (settings: UserBotSettings) => Promise<void> | void;
+/** Wipe demo + attiva REAL trading dopo onboarding solvente */
+export type RealSessionHandler = (settings: UserBotSettings) => Promise<void> | void;
 
 type PendingStep =
   | "await_fomo_key"
@@ -61,11 +65,17 @@ export class TelegramService {
   private stateProvider: StateProvider | null = null;
   private livePositionsProvider: LivePositionsProvider | null = null;
   private onSettingsChanged: SettingsChangedHandler | null = null;
-  private modeLabel: ModeLabelProvider = () => "paper";
+  private onRealSessionReady: RealSessionHandler | null = null;
+  private modeLabel: ModeLabelProvider = () => "live";
   private boundChatId: string | null = null;
   private readonly explicitAllowlist: string[];
   private dashMsg = new Map<string, number>();
   private pending = new Map<string, PendingStep>();
+  private pendingAvailableSol = new Map<string, number>();
+  private pendingFomoHandle = new Map<string, string>();
+  private readonly fomoTrading = new FomoTradingClient({
+    apiBase: process.env.FOMO_API_BASE || "https://prod-api.fomo.family",
+  });
   readonly settingsStore = new UserSettingsStore();
 
   constructor(private config: AppConfig) {
@@ -88,12 +98,14 @@ export class TelegramService {
       modeLabel?: ModeLabelProvider;
       livePositionsProvider?: LivePositionsProvider;
       onSettingsChanged?: SettingsChangedHandler;
+      onRealSessionReady?: RealSessionHandler;
     },
   ): void {
     this.handler = handler;
     this.stateProvider = opts?.stateProvider ?? null;
     this.livePositionsProvider = opts?.livePositionsProvider ?? null;
     this.onSettingsChanged = opts?.onSettingsChanged ?? null;
+    this.onRealSessionReady = opts?.onRealSessionReady ?? null;
     if (opts?.modeLabel) this.modeLabel = opts.modeLabel;
 
     if (!this.config.TELEGRAM_BOT_TOKEN) {
@@ -227,13 +239,31 @@ export class TelegramService {
   private async finishOnboarding(chatId: string): Promise<void> {
     this.pending.delete(chatId);
     const now = new Date().toISOString();
+    const available = this.pendingAvailableSol.get(chatId) ?? 0;
+    const handle = this.pendingFomoHandle.get(chatId);
+    this.pendingAvailableSol.delete(chatId);
+    this.pendingFomoHandle.delete(chatId);
+
     const settings = await this.settingsStore.save({
       onboarded: true,
       sessionStartedAt: now,
+      fomoAuthenticated: true,
+      lastKnownAvailableSol: available,
+      solvent: true,
     });
     this.applyConfigFromSettings(settings);
+    await this.onRealSessionReady?.(settings);
     await this.onSettingsChanged?.(settings);
-    await this.sendMenu(chatId, formatOnboardingDone(settings), mainMenuKeyboard(true));
+    await this.sendMenu(
+      chatId,
+      formatRealConnected({
+        availableSol: available,
+        budgetSol: settings.fixedTradeSol,
+        solUsd: settings.solUsd,
+        handle,
+      }),
+      mainMenuKeyboard(true),
+    );
   }
 
   private applyConfigFromSettings(settings: UserBotSettings): void {
@@ -249,43 +279,60 @@ export class TelegramService {
   private async handlePendingInput(chatId: string, text: string, step: PendingStep): Promise<void> {
     if (step === "await_fomo_key" || step === "edit_fomo_key") {
       const raw = text.trim();
-      const lower = raw.toLowerCase();
-      const isDemo = lower === "demo" || lower === "skip" || lower === "-";
-      if (!isDemo && !raw) {
+      const key = raw
+        .replace(/^Bearer\s+/i, "")
+        .replace(/^["']|["']$/g, "")
+        .trim();
+      if (!key || key.length < 20 || key.toLowerCase() === "demo") {
         await this.send(
           chatId,
-          "Token obbligatorio. In Console: <code>copy(JSON.parse(localStorage.getItem('privy:token')))</code> oppure <code>demo</code>.",
+          "FOMO API Key obbligatoria (REAL). In Console: <code>copy(JSON.parse(localStorage.getItem('privy:token')))</code> — deve iniziare con <code>eyJ...</code>. Demo disabilitata.",
         );
         return;
       }
-      // Strip quotes / Bearer prefix from Privy JWT pasted from localStorage
-      const key = isDemo
-        ? ""
-        : raw
-            .replace(/^Bearer\s+/i, "")
-            .replace(/^["']|["']$/g, "")
-            .trim();
-      if (!isDemo && key.length < 20) {
+
+      await this.send(chatId, "⏳ Connessione a FOMO e lettura saldo reale…");
+      const solUsd = this.settingsStore.get().solUsd || 150;
+      const bal = await this.fomoTrading.fetchBalance(key, solUsd);
+      if (!bal.ok) {
         await this.send(
           chatId,
-          "Token troppo corto. Devi copiare <code>privy:token</code> (inizia con <code>eyJ...</code>).",
+          [
+            "❌ Impossibile connettersi / leggere il saldo FOMO.",
+            escapeHtmlLite(bal.error || "errore sconosciuto"),
+            "",
+            "Rifai login su fomo.family, copia un privy:token fresco e reinviarlo.",
+            "Se vedi Cloudflare: esegui il bot su una rete non bloccata oppure imposta FOMO_CF_CLEARANCE.",
+          ].join("\n"),
         );
         return;
       }
+
       const settings = await this.settingsStore.save({
         fomoApiKey: key,
-        fomoAuthenticated: Boolean(key),
+        fomoAuthenticated: true,
+        lastKnownAvailableSol: bal.availableSol,
+        solanaAddress: bal.solanaAddress || this.settingsStore.get().solanaAddress,
+        solvent: false,
+        onboarded: false,
       });
       this.applyConfigFromSettings(settings);
+      this.pendingAvailableSol.set(chatId, bal.availableSol);
+      if (bal.handle) this.pendingFomoHandle.set(chatId, bal.handle);
+
       if (step === "await_fomo_key") {
         this.pending.set(chatId, "await_budget");
-        await this.send(chatId, formatAskBudget());
+        await this.send(chatId, formatAskBudget(bal.availableSol, solUsd));
       } else {
         this.pending.delete(chatId);
         await this.onSettingsChanged?.(settings);
         await this.sendMenu(
           chatId,
-          key ? "✅ Sessione Fomo (<code>privy:token</code>) aggiornata." : "✅ Modalità demo/paper.",
+          [
+            "✅ FOMO API Key aggiornata (REAL).",
+            `💳 Saldo: <b>${bal.availableSol.toFixed(4)} SOL</b>`,
+            "Completa /setup se la sessione non è attiva.",
+          ].join("\n"),
           settingsKeyboard(),
         );
       }
@@ -298,7 +345,33 @@ export class TelegramService {
         await this.send(chatId, "Valore non valido. Invia un numero &gt; 0 (es. <code>0.15</code>).");
         return;
       }
-      const settings = await this.settingsStore.save({ fixedTradeSol: n });
+
+      const solUsd = this.settingsStore.get().solUsd || 150;
+      let available = this.pendingAvailableSol.get(chatId);
+      if (available == null) {
+        const key = this.settingsStore.get().fomoApiKey;
+        if (key) {
+          const bal = await this.fomoTrading.fetchBalance(key, solUsd);
+          available = bal.ok ? bal.availableSol : 0;
+          if (bal.ok) this.pendingAvailableSol.set(chatId, available);
+        } else {
+          available = this.settingsStore.get().lastKnownAvailableSol ?? 0;
+        }
+      }
+
+      if (n > available + 1e-9) {
+        await this.settingsStore.save({ fixedTradeSol: n, solvent: false, onboarded: false });
+        await this.send(chatId, formatInsolvent(n, available, solUsd));
+        // resta in await_budget
+        this.pending.set(chatId, step === "edit_budget" ? "edit_budget" : "await_budget");
+        return;
+      }
+
+      const settings = await this.settingsStore.save({
+        fixedTradeSol: n,
+        solvent: true,
+        lastKnownAvailableSol: available,
+      });
       this.applyConfigFromSettings(settings);
       if (step === "await_budget") {
         await this.finishOnboarding(chatId);
@@ -307,7 +380,7 @@ export class TelegramService {
         await this.onSettingsChanged?.(settings);
         await this.sendMenu(
           chatId,
-          `✅ Budget fisso aggiornato: <b>${n} SOL</b> per ogni COPY BUY.`,
+          `✅ Budget fisso aggiornato: <b>${n} SOL</b> per ogni COPY BUY REALE.\n💳 Saldo: ${available.toFixed(4)} SOL`,
           settingsKeyboard(),
         );
       }
@@ -426,11 +499,11 @@ export class TelegramService {
         await this.send(
           chatId,
           [
-            "🔑 Incolla il nuovo <b>privy:token</b>.",
+            "🔑 Incolla la nuova <b>FOMO API Key</b> (<code>privy:token</code>).",
             "",
             "In Console Fomo:",
             "<code>copy(JSON.parse(localStorage.getItem('privy:token')))</code>",
-            "Poi Ctrl+V qui. Oppure <code>demo</code>.",
+            "Poi Ctrl+V qui. Demo non consentita.",
           ].join("\n"),
         );
         return;
@@ -616,4 +689,8 @@ export class TelegramService {
   }): Promise<void> {
     await this.send(undefined, formatStatus(params));
   }
+}
+
+function escapeHtmlLite(s: string): string {
+  return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }

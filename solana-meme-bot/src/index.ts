@@ -3,9 +3,10 @@ import type { Server } from "node:http";
 import { MaxProfitEngine } from "./analysis/max-profit-engine.js";
 import type { AppConfig } from "./config/schema.js";
 import { loadConfig } from "./config/schema.js";
-import { FomoAccountClient } from "./copy/fomo-account.js";
+import { FomoActivityFeed } from "./copy/fomo-activity-feed.js";
 import { FomoDemoFeed } from "./copy/fomo-demo-feed.js";
 import { FomoLeaderboardClient } from "./copy/fomo-leaderboard.js";
+import { FomoTradingClient } from "./copy/fomo-trading.js";
 import { MirrorEngine } from "./copy/mirror-engine.js";
 import { SolanaWalletWatcher } from "./copy/solana-watcher.js";
 import type { MirrorSignal } from "./copy/types.js";
@@ -24,6 +25,7 @@ import {
   formatBalanceReport,
   summarizeTrades,
 } from "./telegram/reports.js";
+import { FomoLiveExecutionAdapter } from "./trader/fomo-adapter.js";
 import { PositionManager } from "./trader/position-manager.js";
 import { buildExecutionRouter, type ExecutionRouter } from "./trader/venue-adapter.js";
 import { WalletManager } from "./trader/wallet-manager.js";
@@ -50,9 +52,10 @@ export class BotController {
   readonly positions: PositionManager;
   readonly registry = new WalletRegistry();
   private readonly fomo: FomoLeaderboardClient;
-  private readonly fomoAccount = new FomoAccountClient();
+  private readonly fomoTrading: FomoTradingClient;
   private watcher: SolanaWalletWatcher | null = null;
   private demoFeed: FomoDemoFeed | null = null;
+  private activityFeed: FomoActivityFeed | null = null;
   private mirror: MirrorEngine | null = null;
   private readonly store = new StateStore();
 
@@ -77,7 +80,16 @@ export class BotController {
     this.wallet = new WalletManager(config);
     this.scanner = new MarketScanner(config);
     this.engine = new MaxProfitEngine(config);
-    this.router = buildExecutionRouter(config);
+    this.fomoTrading = new FomoTradingClient({
+      apiBase: config.FOMO_API_BASE,
+      cfClearance: config.FOMO_CF_CLEARANCE,
+      cfBm: config.FOMO_CF_BM,
+    });
+    this.router = buildExecutionRouter(config, {
+      fomoClient: this.fomoTrading,
+      getFomoApiKey: () => this.config.FOMO_API_KEY || this.telegram.getSettings().fomoApiKey,
+      getSolUsd: () => this.telegram.getSettings().solUsd || 150,
+    });
     this.positions = new PositionManager(config, this.router);
     this.fomo = new FomoLeaderboardClient(config);
 
@@ -114,6 +126,7 @@ export class BotController {
       onCopyBuy: async (position, risk, signal, token) => {
         this.state.mirrorBuys += 1;
         this.state.lastMirrorAt = nowIso();
+        await this.syncFomoResidualBudget();
         await this.telegram.notifyCopyBuy(position, risk, signal, token);
       },
       onCopySell: async (trade, _signal, latencyNote) => {
@@ -121,10 +134,11 @@ export class BotController {
         this.state.lastMirrorAt = nowIso();
         this.state.sessionRealizedPnlSol += trade.pnlSol;
         trade.copyLatencyNote = latencyNote;
+        await this.syncFomoResidualBudget();
         await this.telegram.notifySell(trade);
         await this.alerts.push({
           severity: "info",
-          title: "Copy sell replicato",
+          title: "Copy sell REAL eseguito",
           message: latencyNote,
           requiresUpdate: false,
           source: "mirror",
@@ -138,19 +152,90 @@ export class BotController {
 
     this.telegram.start(async (cmd, chatId) => this.handleCommand(cmd, chatId), {
       stateProvider: () => this.getState(),
-      modeLabel: () =>
-        `COPY/FOMO ${this.state.tradingMode}${this.config.DRY_RUN ? " dry-run" : ""}${this.state.tradingMode === "paper" ? " 🧪" : ""}`,
+      modeLabel: () => {
+        const real = this.state.tradingMode === "live" && !this.config.DRY_RUN;
+        return `COPY/FOMO ${this.state.tradingMode}${real ? " REAL 🔴" : this.config.DRY_RUN ? " dry-run" : ""}${this.state.tradingMode === "paper" ? " 🧪" : ""}`;
+      },
       livePositionsProvider: () => this.getLivePositionRows(),
       onSettingsChanged: async (settings) => {
         this.applyUserSettings(settings);
+        this.activityFeed?.setTargetUsernames(settings.fomoUsernames);
         this.demoFeed?.setTargetUsernames(settings.fomoUsernames);
-        this.demoFeed?.ensureDemoWallets();
         this.registry.enableOnlyUsernames(settings.fomoUsernames);
         await this.watcher?.resubscribeAll();
         this.mirror?.reindex();
         await this.persist();
       },
+      onRealSessionReady: async (settings) => {
+        await this.activateRealSession(settings);
+      },
     });
+  }
+
+  /** Wipe demo + attiva REAL trading FOMO. */
+  async activateRealSession(settings: {
+    fixedTradeSol: number;
+    fomoApiKey: string;
+    fomoUsernames: string[];
+    solUsd: number;
+    lastKnownAvailableSol?: number | null;
+  }): Promise<void> {
+    // 1) Elimina progresso demo
+    this.state.openPositions = [];
+    this.state.closedTrades = [];
+    this.state.rejectedTrades = [];
+    this.state.realizedPnlSol = 0;
+    this.state.unrealizedPnlSol = 0;
+    this.state.sessionRealizedPnlSol = 0;
+    this.state.mirrorBuys = 0;
+    this.state.mirrorSells = 0;
+    this.state.sessionStartedAt = nowIso();
+    this.mirror?.reindex();
+    this.demoFeed?.stop();
+
+    // 2) Forza live REAL
+    this.config.TRADING_MODE = "live";
+    this.config.DRY_RUN = false;
+    this.config.COPY_DEMO_FOMO_FEED = false;
+    this.config.PREFERRED_EXECUTION_VENUE = "fomo";
+    this.config.FOMO_API_KEY = settings.fomoApiKey;
+    this.config.COPY_TRADE_SOL = settings.fixedTradeSol;
+    process.env.FOMO_API_KEY = settings.fomoApiKey;
+    this.state.tradingMode = "live";
+
+    this.router.setAdapter(
+      "fomo",
+      new FomoLiveExecutionAdapter(
+        this.fomoTrading,
+        () => this.config.FOMO_API_KEY || this.telegram.getSettings().fomoApiKey,
+        () => this.telegram.getSettings().solUsd || 150,
+      ),
+    );
+
+    const available =
+      settings.lastKnownAvailableSol ??
+      (await this.fomoTrading.fetchBalance(settings.fomoApiKey, settings.solUsd || 150)).availableSol;
+    this.state.budgetSol = available;
+    this.state.residualBudgetSol = available;
+    this.state.copySessionActive = true;
+    this.state.status = "running";
+    this.state.pauseReason = undefined;
+
+    this.activityFeed?.setTargetUsernames(settings.fomoUsernames);
+    this.activityFeed?.start(async (signal) => {
+      try {
+        await this.mirror?.handleSignal(signal);
+      } catch (err) {
+        logger.error({ err }, "Errore activity signal");
+      }
+    });
+    this.registry.enableOnlyUsernames(settings.fomoUsernames);
+    await this.refreshLeaderboard();
+    await this.persist();
+    logger.info(
+      { availableSol: available, budget: settings.fixedTradeSol, targets: settings.fomoUsernames },
+      "Sessione FOMO REAL attivata — demo wipe completato",
+    );
   }
 
   /** Applica budget fisso / API key / target usernames dalle settings Telegram */
@@ -161,7 +246,9 @@ export class BotController {
     solUsd: number;
     onboarded?: boolean;
     fomoAuthenticated?: boolean;
+    solvent?: boolean;
     sessionStartedAt?: string | null;
+    lastKnownAvailableSol?: number | null;
   }): void {
     this.config.COPY_TRADE_SOL = settings.fixedTradeSol;
     if (settings.fomoApiKey) {
@@ -170,8 +257,17 @@ export class BotController {
     } else {
       this.config.FOMO_API_KEY = "";
     }
-    this.state.copySessionActive = Boolean(settings.onboarded);
-    if (settings.onboarded) {
+    const realReady = Boolean(
+      settings.onboarded && settings.fomoAuthenticated && settings.solvent !== false && settings.fomoApiKey,
+    );
+    this.state.copySessionActive = realReady;
+    if (realReady) {
+      // REAL di default quando autenticato
+      if (this.config.TRADING_MODE !== "paper") {
+        this.config.TRADING_MODE = "live";
+        this.config.DRY_RUN = false;
+        this.state.tradingMode = "live";
+      }
       const started = settings.sessionStartedAt ?? this.state.sessionStartedAt ?? nowIso();
       if (!this.state.sessionStartedAt) {
         this.state.sessionStartedAt = started;
@@ -179,20 +275,42 @@ export class BotController {
         this.state.sessionStartedAt = settings.sessionStartedAt;
         this.state.sessionRealizedPnlSol = 0;
       }
+      if (settings.lastKnownAvailableSol != null && Number.isFinite(settings.lastKnownAvailableSol)) {
+        this.state.budgetSol = settings.lastKnownAvailableSol;
+        const openSol = this.state.openPositions.reduce((a, p) => a + p.amountSol, 0);
+        this.state.residualBudgetSol = Math.max(0, settings.lastKnownAvailableSol - openSol);
+      }
     } else {
       this.state.copySessionActive = false;
     }
     this.registry.enableOnlyUsernames(settings.fomoUsernames);
     this.demoFeed?.setTargetUsernames(settings.fomoUsernames);
+    this.activityFeed?.setTargetUsernames(settings.fomoUsernames);
     logger.info(
       {
         tradeSol: settings.fixedTradeSol,
         targets: settings.fomoUsernames,
         session: this.state.copySessionActive,
         hasApiKey: Boolean(settings.fomoApiKey),
+        mode: this.state.tradingMode,
       },
       "User settings applicate al controller",
     );
+  }
+
+  async syncFomoResidualBudget(): Promise<void> {
+    const settings = this.telegram.getSettings();
+    if (!settings.fomoApiKey) return;
+    const bal = await this.fomoTrading.fetchBalance(settings.fomoApiKey, settings.solUsd || 150);
+    if (!bal.ok) return;
+    const openSol = this.state.openPositions.reduce((a, p) => a + p.amountSol, 0);
+    this.state.budgetSol = bal.availableSol + openSol;
+    this.state.residualBudgetSol = Math.max(0, bal.availableSol);
+    await this.telegram.settingsStore.save({
+      lastKnownAvailableSol: bal.availableSol,
+      solvent: bal.availableSol + 1e-9 >= settings.fixedTradeSol,
+      solanaAddress: bal.solanaAddress || settings.solanaAddress,
+    });
   }
 
   async getLivePositionRows(): Promise<
@@ -256,14 +374,18 @@ export class BotController {
     }
 
     this.state.openPositions = [];
+    const sessionPnlBeforeReset = this.state.sessionRealizedPnlSol;
+    this.state.closedTrades = [];
     this.state.unrealizedPnlSol = 0;
+    this.state.sessionRealizedPnlSol = 0;
     this.mirror?.reindex();
+    this.activityFeed?.stop();
+    this.demoFeed?.stop();
 
-    const sessionPnl = this.state.sessionRealizedPnlSol;
+    const sessionPnl = sessionPnlBeforeReset;
     await this.telegram.settingsStore.resetSession();
     this.state.copySessionActive = false;
     this.state.sessionStartedAt = null;
-    this.state.sessionRealizedPnlSol = 0;
     this.state.status = "paused";
     this.state.pauseReason = "Sessione resettata con /closeall — invia /start";
     this.config.FOMO_API_KEY = "";
@@ -272,7 +394,7 @@ export class BotController {
 
     logger.info(
       { symbols, liquidationPnl, sessionPnl },
-      "closeall: liquidazione e reset sessione",
+      "closeall: liquidazione e reset sessione REAL",
     );
     return formatCloseAllReport({
       symbols,
@@ -281,16 +403,17 @@ export class BotController {
     });
   }
 
-  /** Report PnL sessione + finestre 24h / 3d / 7d / 30d */
+  /** Report PnL sessione + finestre 24h / 3d / 7d / 30d — solo trade REALI */
   buildProfitAllReport(): string {
     const settings = this.telegram.getSettings();
     const solUsd = settings.solUsd || 150;
     const sessionStart = this.state.sessionStartedAt
       ? Date.parse(this.state.sessionStartedAt)
       : Date.now();
-    const sessionTrades = this.state.closedTrades.filter((t) => Date.parse(t.closedAt) >= sessionStart);
+    // Solo trade non simulati (dopo wipe demo non dovrebbero esserci paper)
+    const realClosed = this.state.closedTrades.filter((t) => t.position.venue !== "paper");
+    const sessionTrades = realClosed.filter((t) => Date.parse(t.closedAt) >= sessionStart);
     const session = summarizeTrades(sessionTrades);
-    // Preferisci contatore runtime se allineato
     const sessionPnlSol =
       this.state.copySessionActive && this.state.sessionRealizedPnlSol !== 0
         ? this.state.sessionRealizedPnlSol
@@ -303,7 +426,7 @@ export class BotController {
       { label: "📅 1 Settimana", ms: 7 * 24 * 3_600_000 },
       { label: "🗓️ 1 Mese", ms: 30 * 24 * 3_600_000 },
     ].map((w) => {
-      const trades = this.state.closedTrades.filter((t) => now - Date.parse(t.closedAt) <= w.ms);
+      const trades = realClosed.filter((t) => now - Date.parse(t.closedAt) <= w.ms);
       const s = summarizeTrades(trades);
       return {
         label: w.label,
@@ -321,6 +444,7 @@ export class BotController {
       sessionWinRate: session.winRate,
       windows,
       solUsd,
+      realFomoBalanceSol: settings.lastKnownAvailableSol,
     });
   }
 
@@ -329,17 +453,43 @@ export class BotController {
     const solUsd = settings.solUsd || 150;
     const openPositionsSol = this.state.openPositions.reduce((a, p) => a + p.amountSol, 0);
 
-    let fomoSnap = null as Awaited<ReturnType<FomoAccountClient["fetchSnapshot"]>> | null;
+    let fomoSnap: {
+      ok: boolean;
+      handle?: string;
+      cashUsd?: number;
+      availableSol?: number;
+      portfolioUsd?: number;
+      positionsUsd?: number;
+      positionsCount?: number;
+      solanaAddress?: string;
+      error?: string;
+    } | null = null;
+
     if (settings.fomoApiKey) {
-      fomoSnap = await this.fomoAccount.fetchSnapshot(settings.fomoApiKey);
-      if (fomoSnap.ok && fomoSnap.solanaAddress && !settings.solanaAddress) {
-        await this.telegram.settingsStore.save({ solanaAddress: fomoSnap.solanaAddress });
+      const bal = await this.fomoTrading.fetchBalance(settings.fomoApiKey, solUsd);
+      if (bal.ok) {
+        fomoSnap = {
+          ok: true,
+          handle: bal.handle,
+          cashUsd: bal.cashUsd,
+          availableSol: bal.availableSol,
+          portfolioUsd: bal.portfolioUsd,
+          positionsUsd: bal.positionsUsd,
+          positionsCount: bal.positionsCount,
+          solanaAddress: bal.solanaAddress,
+        };
+        await this.telegram.settingsStore.save({
+          lastKnownAvailableSol: bal.availableSol,
+          solanaAddress: bal.solanaAddress || settings.solanaAddress,
+          solvent: bal.availableSol + 1e-9 >= settings.fixedTradeSol,
+        });
+        this.state.residualBudgetSol = Math.max(0, bal.availableSol);
+        this.state.budgetSol = bal.availableSol + openPositionsSol;
+      } else {
+        fomoSnap = { ok: false, error: bal.error };
       }
     } else {
-      fomoSnap = {
-        ok: false,
-        error: "Nessun privy:token — /start e incolla privy:token",
-      };
+      fomoSnap = { ok: false, error: "Nessuna FOMO API Key — /start e incolla privy:token" };
     }
 
     const refreshed = this.telegram.getSettings();
@@ -351,14 +501,15 @@ export class BotController {
     let onChainSol: number | null = null;
     if (addr) {
       onChainSol = await this.wallet.getSolBalanceForAddress(addr);
-    } else {
-      onChainSol = await this.wallet.getSolBalance();
     }
 
-    const mode = `${this.state.tradingMode}${this.config.DRY_RUN ? " dry-run" : ""}`;
+    const mode =
+      this.state.tradingMode === "live" && !this.config.DRY_RUN
+        ? "live REAL FOMO"
+        : `${this.state.tradingMode}${this.config.DRY_RUN ? " dry-run" : ""}`;
     return formatBalanceReport({
       mode,
-      budgetSol: this.state.budgetSol,
+      budgetSol: settings.fixedTradeSol,
       residualSol: this.state.residualBudgetSol,
       openPositionsSol,
       unrealizedPnlSol: this.state.unrealizedPnlSol,
@@ -391,11 +542,26 @@ export class BotController {
       };
       this.watcher = new SolanaWalletWatcher(this.config, this.registry);
       await this.watcher.start(onSignal);
+
+      this.activityFeed = new FomoActivityFeed(
+        this.config,
+        this.fomoTrading,
+        this.registry,
+        () => this.config.FOMO_API_KEY || this.telegram.getSettings().fomoApiKey,
+      );
       const settings = this.telegram.getSettings();
+      this.activityFeed.setTargetUsernames(settings.fomoUsernames);
+      if (settings.onboarded && settings.fomoAuthenticated && settings.fomoApiKey) {
+        this.activityFeed.start(onSignal);
+      }
+
+      // Demo feed solo se esplicitamente abilitato (paper)
       this.demoFeed = new FomoDemoFeed(this.config, this.registry);
       this.demoFeed.setTargetUsernames(settings.fomoUsernames);
-      this.demoFeed.ensureDemoWallets();
-      this.demoFeed.start(onSignal);
+      if (this.config.TRADING_MODE === "paper" && this.config.COPY_DEMO_FOMO_FEED) {
+        this.demoFeed.ensureDemoWallets();
+        this.demoFeed.start(onSignal);
+      }
       this.syncTrackedView();
       await this.persist();
       this.leaderboardTimer = setInterval(
@@ -445,6 +611,7 @@ export class BotController {
     if (this.leaderboardTimer) clearInterval(this.leaderboardTimer);
     await this.watcher?.stop();
     this.demoFeed?.stop();
+    this.activityFeed?.stop();
     await this.telegram.stop();
     await this.persist();
   }
@@ -546,13 +713,11 @@ export class BotController {
           severity: "warning",
           title: "FOMO Top PnL API non disponibile",
           message:
-            "Uso target username in DEMO/paper. Configura FOMO API Key da /start → Settings.",
+            "Leaderboard FOMO non raggiungibile. Uso activity feed / wallet risolti da @username. Verifica FOMO API Key e Cloudflare.",
           requiresUpdate: false,
           source: "fomo",
         });
         if (this.state.status === "awaiting_update") this.state.status = "running";
-        this.demoFeed?.setTargetUsernames(settings.fomoUsernames);
-        this.demoFeed?.ensureDemoWallets();
       }
 
       this.registry.enableOnlyUsernames(settings.fomoUsernames);

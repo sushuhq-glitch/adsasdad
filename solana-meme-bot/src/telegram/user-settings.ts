@@ -5,7 +5,7 @@ import { nowIso } from "../lib/money.js";
 
 export interface UserBotSettings {
   fomoApiKey: string;
-  /** true solo dopo onboarding con API key (o demo esplicito) */
+  /** true solo dopo onboarding con API key reale */
   fomoAuthenticated: boolean;
   /** Budget fisso per ogni COPY BUY (SOL) */
   fixedTradeSol: number;
@@ -17,6 +17,10 @@ export interface UserBotSettings {
   onboarded: boolean;
   /** Inizio sessione corrente (dopo /start setup completato) */
   sessionStartedAt: string | null;
+  /** Ultimo saldo FOMO disponibile (SOL) letto in onboarding / sync */
+  lastKnownAvailableSol: number | null;
+  /** true se budget <= saldo FOMO */
+  solvent: boolean;
   updatedAt: string;
 }
 
@@ -34,6 +38,8 @@ export function defaultSettings(): UserBotSettings {
     solanaAddress: "",
     onboarded: false,
     sessionStartedAt: null,
+    lastKnownAvailableSol: null,
+    solvent: false,
     updatedAt: nowIso(),
   };
 }
@@ -60,6 +66,9 @@ export class UserSettingsStore {
             ? parsed.fomoUsernames.map(normalizeUsername)
             : [...DEFAULT_USERNAMES],
         sessionStartedAt: parsed.sessionStartedAt ?? null,
+        lastKnownAvailableSol:
+          parsed.lastKnownAvailableSol == null ? null : Number(parsed.lastKnownAvailableSol),
+        solvent: Boolean(parsed.solvent),
       };
       logger.info(
         {
@@ -95,6 +104,8 @@ export class UserSettingsStore {
       fomoAuthenticated: false,
       onboarded: false,
       sessionStartedAt: null,
+      lastKnownAvailableSol: null,
+      solvent: false,
     });
   }
 }

@@ -21,11 +21,12 @@ const csvWallets = z
   );
 
 export const envSchema = z.object({
-  TRADING_MODE: z.enum(["paper", "live"]).default("paper"),
+  /** Default live: REAL trading su account FOMO. Usa paper solo se esplicitamente richiesto. */
+  TRADING_MODE: z.enum(["paper", "live"]).default("live"),
   DRY_RUN: z
     .string()
     .optional()
-    .transform((v) => v !== "false"),
+    .transform((v) => v === "true"),
 
   // Strategy modes
   COPY_TRADING_ENABLED: z
@@ -73,11 +74,11 @@ export const envSchema = z.object({
     .transform((v) => v === "true"),
   /** address or address:Label, comma-separated */
   COPY_WALLET_SEEDS: csvWallets,
-  /** Paper-only: simula Top FOMO PnL su token caldi finché non hai API/wallet reali */
+  /** Demo feed disabilitato di default — REAL FOMO only. */
   COPY_DEMO_FOMO_FEED: z
     .string()
     .optional()
-    .transform((v) => v !== "false"),
+    .transform((v) => v === "true"),
   COPY_DEMO_INTERVAL_MS: z.coerce.number().int().positive().default(45_000),
 
   SOLANA_RPC_URL: z.string().url().default("https://api.mainnet-beta.solana.com"),
@@ -90,7 +91,11 @@ export const envSchema = z.object({
   ANTHEM_API_KEY: z.string().optional().default(""),
   ANTHEM_API_BASE: z.string().default("https://api.anthem.example/v1"),
   FOMO_API_KEY: z.string().optional().default(""),
-  FOMO_API_BASE: z.string().default("https://api.fomo.family"),
+  /** prod-api ufficiale dietro la SPA fomo.family */
+  FOMO_API_BASE: z.string().default("https://prod-api.fomo.family"),
+  /** Cookie Cloudflare opzionale (cf_clearance) se il datacenter è bloccato */
+  FOMO_CF_CLEARANCE: z.string().optional().default(""),
+  FOMO_CF_BM: z.string().optional().default(""),
   PUMPFUN_API_KEY: z.string().optional().default(""),
   PUMPFUN_API_BASE: z.string().default("https://frontend-api.pump.fun"),
   PREFERRED_EXECUTION_VENUE: z.enum(["axiom", "anthem", "fomo", "pumpfun"]).default("fomo"),
@@ -125,8 +130,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const allowed = new Set(data.TELEGRAM_ALLOWED_CHAT_IDS);
   if (data.TELEGRAM_CHAT_ID) allowed.add(data.TELEGRAM_CHAT_ID);
 
-  if (data.TRADING_MODE === "live" && !data.WALLET_PRIVATE_KEY) {
-    throw new Error("TRADING_MODE=live richiede WALLET_PRIVATE_KEY");
+  // REAL FOMO: esecuzione sull'account FOMO via API Key — wallet Solana locale non obbligatorio.
+  // WALLET_PRIVATE_KEY resta opzionale per venue non-FOMO / lettura on-chain.
+  if (
+    data.TRADING_MODE === "live" &&
+    data.PREFERRED_EXECUTION_VENUE !== "fomo" &&
+    !data.WALLET_PRIVATE_KEY
+  ) {
+    throw new Error(
+      "TRADING_MODE=live con venue non-FOMO richiede WALLET_PRIVATE_KEY (oppure PREFERRED_EXECUTION_VENUE=fomo)",
+    );
   }
 
   return {
