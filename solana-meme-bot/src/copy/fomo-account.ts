@@ -19,11 +19,15 @@ export interface FomoAccountSnapshot {
 
 type Json = Record<string, unknown>;
 
+type AuthMode =
+  | "bearer"
+  | "privy-token-header"
+  | "cookie-privy-token"
+  | "bearer-plus-app-id";
+
 /**
  * Client account FOMO (prod-api) autenticato con Privy JWT (`privy:token`).
- * Endpoint tipici (come usati da fomo.family / estensioni):
- *   GET /v2/users/me
- *   GET /v2/users/{id}/balances
+ * Prova più schemi di auth perché FOMO web usa spesso cookie di sessione browser.
  */
 export class FomoAccountClient {
   constructor(
@@ -37,24 +41,48 @@ export class FomoAccountClient {
       return { ok: false, error: "Nessun privy:token — completa /start" };
     }
 
-    const me = await this.getJson("/v2/users/me", token);
-    if (!me.ok) {
-      // fallback: some builds use /v3
-      const me3 = await this.getJson("/v3/users/me", token);
-      if (!me3.ok) {
-        return {
-          ok: false,
-          error: me.error || me3.error || "Impossibile raggiungere FOMO API",
-        };
-      }
-      return this.fromUserAndBalances(token, me3.json);
+    const expiry = readJwtExpiry(token);
+    if (expiry && expiry.getTime() <= Date.now() + 30_000) {
+      return {
+        ok: false,
+        error: `privy:token scaduto (${expiry.toISOString()}). Rifai login su fomo.family e copia un token fresco.`,
+      };
     }
-    return this.fromUserAndBalances(token, me.json);
+
+    const appId = readJwtAudience(token);
+    const modes: AuthMode[] = [
+      "bearer",
+      "bearer-plus-app-id",
+      "privy-token-header",
+      "cookie-privy-token",
+    ];
+
+    let lastError = "Impossibile raggiungere FOMO API";
+    for (const mode of modes) {
+      for (const path of ["/v2/users/me", "/v3/users/me"] as const) {
+        const me = await this.getJson(path, token, mode, appId);
+        if (me.ok) {
+          logger.info({ mode, path }, "FOMO /users/me OK");
+          return this.fromUserAndBalances(token, me.json, mode, appId);
+        }
+        lastError = me.error;
+        if (/Cloudflare/i.test(me.error)) {
+          return { ok: false, error: me.error };
+        }
+      }
+    }
+
+    return {
+      ok: false,
+      error: explainFomoAuthError(lastError, expiry),
+    };
   }
 
   private async fromUserAndBalances(
     token: string,
     meJson: unknown,
+    mode: AuthMode,
+    appId?: string,
   ): Promise<FomoAccountSnapshot> {
     const root = asObj(meJson) ?? {};
     const ro = asObj(root.responseObject) ?? root;
@@ -72,6 +100,7 @@ export class FomoAccountClient {
       "balanceUsd",
       "cashBalance",
       "availableCash",
+      "buyingPower",
     ]);
     const portfolioUsd = firstNumber(ro, [
       "portfolioUsd",
@@ -87,7 +116,7 @@ export class FomoAccountClient {
     let balCash: number | undefined;
 
     if (userId) {
-      const bal = await this.getJson(`/v2/users/${userId}/balances`, token);
+      const bal = await this.getJson(`/v2/users/${userId}/balances`, token, mode, appId);
       if (bal.ok) {
         const parsed = parseBalancesPayload(bal.json);
         positionsUsd = parsed.positionsUsd;
@@ -120,36 +149,60 @@ export class FomoAccountClient {
       portfolioUsd,
       positionsUsd,
       positionsCount,
+      rawNote: `auth=${mode}`,
     };
   }
 
   private async getJson(
     path: string,
     token: string,
+    mode: AuthMode,
+    appId?: string,
   ): Promise<{ ok: true; json: unknown } | { ok: false; error: string }> {
     const url = `${this.apiBase.replace(/\/$/, "")}${path}`;
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), this.timeoutMs);
+    const headers: Record<string, string> = {
+      accept: "application/json",
+      origin: "https://fomo.family",
+      referer: "https://fomo.family/",
+      "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    };
+
+    if (mode === "bearer" || mode === "bearer-plus-app-id") {
+      headers.authorization = `Bearer ${token}`;
+    }
+    if (mode === "privy-token-header") {
+      headers["privy-token"] = token;
+      headers.authorization = `Bearer ${token}`;
+    }
+    if (mode === "cookie-privy-token") {
+      headers.cookie = `privy-token=${token}`;
+      headers.authorization = `Bearer ${token}`;
+    }
+    if ((mode === "bearer-plus-app-id" || mode === "privy-token-header") && appId) {
+      headers["privy-app-id"] = appId;
+    }
+
     try {
-      const res = await fetch(url, {
-        method: "GET",
-        signal: ctrl.signal,
-        headers: {
-          accept: "application/json",
-          authorization: `Bearer ${token}`,
-          origin: "https://fomo.family",
-          referer: "https://fomo.family/",
-          "user-agent":
-            "Mozilla/5.0 (compatible; WEDOTHATBot/1.0; +https://fomo.family)",
-        },
-      });
+      const res = await fetch(url, { method: "GET", signal: ctrl.signal, headers });
       const text = await res.text();
       if (!res.ok) {
         const blocked = /cloudflare|just a moment|cf-ray/i.test(text);
+        let detail = "";
+        try {
+          const j = JSON.parse(text) as Json;
+          detail = str(j.message) || str(j.error) || str(j.msg) || "";
+        } catch {
+          detail = text.slice(0, 120).replace(/\s+/g, " ");
+        }
         const err = blocked
           ? `FOMO API bloccata da Cloudflare (${res.status})`
-          : `FOMO API ${res.status}`;
-        logger.warn({ path, status: res.status, blocked }, "FOMO account fetch failed");
+          : detail
+            ? `FOMO API ${res.status}: ${detail}`
+            : `FOMO API ${res.status}`;
+        logger.warn({ path, status: res.status, mode, detail: detail.slice(0, 160) }, "FOMO account fetch failed");
         return { ok: false, error: err };
       }
       try {
@@ -159,7 +212,7 @@ export class FomoAccountClient {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.warn({ path, err: msg }, "FOMO account network error");
+      logger.warn({ path, mode, err: msg }, "FOMO account network error");
       return { ok: false, error: msg };
     } finally {
       clearTimeout(t);
@@ -172,6 +225,53 @@ export function normalizePrivyToken(raw: string): string {
     .trim()
     .replace(/^Bearer\s+/i, "")
     .replace(/^["']|["']$/g, "");
+}
+
+function explainFomoAuthError(lastError: string, expiry: Date | null): string {
+  if (/scaduto|expired/i.test(lastError)) return lastError;
+  if (expiry) {
+    const mins = Math.round((expiry.getTime() - Date.now()) / 60_000);
+    if (mins < 0) {
+      return `privy:token scaduto. Su fomo.family rifai login → Console → copy(JSON.parse(localStorage.getItem('privy:token')))`;
+    }
+  }
+  if (/400/.test(lastError)) {
+    return [
+      "FOMO ha rifiutato il token (HTTP 400).",
+      "Di solito: token scaduto/incompleto, oppure FOMO vuole la sessione browser (cookie), non solo privy:token.",
+      "Soluzione: esci/rientra su fomo.family, copia un privy:token fresco e reinviarlo con /start.",
+      "Intanto puoi vedere il SOL on-chain da Settings → Imposta wallet Solana.",
+    ].join(" ");
+  }
+  return lastError;
+}
+
+function readJwtExpiry(token: string): Date | null {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const json = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
+      exp?: number;
+    };
+    return typeof json.exp === "number" ? new Date(json.exp * 1000) : null;
+  } catch {
+    return null;
+  }
+}
+
+function readJwtAudience(token: string): string | undefined {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return undefined;
+    const json = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
+      aud?: string | string[];
+    };
+    if (typeof json.aud === "string") return json.aud;
+    if (Array.isArray(json.aud) && typeof json.aud[0] === "string") return json.aud[0];
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseBalancesPayload(json: unknown): {
@@ -242,7 +342,6 @@ function firstNumber(obj: Json, keys: string[]): number | undefined {
     const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
     if (Number.isFinite(n)) return n;
   }
-  // nested balance object
   const nested = asObj(obj.balance);
   if (nested) {
     for (const k of keys) {
