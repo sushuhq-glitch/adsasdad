@@ -1,5 +1,6 @@
 import type { ClosedTrade, DecisionResult, Position, SystemAlert } from "../types/index.js";
 import { fmtSol, fmtUsd } from "../lib/money.js";
+import { formatUsername } from "./user-settings.js";
 
 export function formatBuyMessage(decision: DecisionResult, position: Position): string {
   const c = decision.candidate;
@@ -17,7 +18,6 @@ export function formatBuyMessage(decision: DecisionResult, position: Position): 
     `• Prezzo d'Ingresso (Entry Price): ${fmtUsd(position.entryPriceUsd, 6)}`,
     `• 🔥 LIVELLO DI RISCHIO TRADE: ${risk.riskPct}% (${risk.bandLabel})`,
     `• Motivazione Strategica: ${escapeHtml(decision.motivation)}`,
-    `• Profit potential: ${decision.assessment.technical.profitPotentialScore}/100`,
   ].join("\n");
 }
 
@@ -43,7 +43,6 @@ export function formatSellMessage(trade: ClosedTrade): string {
     `• Prezzo di Uscita (Sell Price): ${fmtUsd(trade.sellPriceUsd, 6)}`,
     `• Variazione prezzo: <b>${movePct >= 0 ? "+" : ""}${movePct.toFixed(2)}%</b>`,
     `• ${reasonLabel[trade.reason]}: ${trade.pnlPct >= 0 ? "+" : ""}${trade.pnlPct.toFixed(2)}%`,
-    `• Rischio Trade in ingresso: ${trade.position.riskPct}%`,
     `• Profit/Loss Netto: <b>${fmtSol(trade.pnlSol)}</b> (${trade.pnlUsd >= 0 ? "+" : "-"}${fmtUsd(Math.abs(trade.pnlUsd))})`,
   ].join("\n");
 }
@@ -58,17 +57,21 @@ export function formatCopyBuyMessage(params: {
   riskLabel: string;
   walletLabel: string;
   walletAddress: string;
+  username?: string;
+  rank?: number;
+  solUsd: number;
 }): string {
-  const short = `${params.walletAddress.slice(0, 4)}…${params.walletAddress.slice(-4)}`;
+  const target =
+    params.username || params.walletLabel
+      ? `${formatUsername(params.username || params.walletLabel)}${params.rank ? ` (Rank #${params.rank})` : ""}`
+      : params.walletLabel;
   return [
-    "🚀 <b>ACQUISTO AUTOMATICO ESEGUITO (COPY BUY)</b>",
+    "🚀 <b>ACQUISTO AUTOMATICO ESEGUITO</b>",
     `• Token: $${params.symbol} (Solana)`,
-    `• Nome: ${params.name}`,
-    `• Market Cap: ${fmtUsd(params.marketCapUsd, 0)}`,
-    `• Wallet Copiato: ${escapeHtml(params.walletLabel)} (#${short})`,
-    `• Importo Investito: ${params.amountSol.toFixed(4)} SOL | Entry Price: ${fmtUsd(params.entryPriceUsd, 6)}`,
-    `• 🔥 LIVELLO DI RISCHIO TRADE: ${params.riskPct}% (${escapeHtml(params.riskLabel)})`,
-    "• Stato: Posizione aperta in ascolto vendita wallet...",
+    `• Market Cap (Entry): ${fmtUsd(params.marketCapUsd, 0)}`,
+    `• Target Fomo: ${escapeHtml(target)}`,
+    `• Budget Allocato: <b>${params.amountSol.toFixed(4)} SOL</b> (~${fmtUsd(params.amountSol * params.solUsd)})`,
+    `• Entry Price: ${fmtUsd(params.entryPriceUsd, 6)}`,
   ].join("\n");
 }
 
@@ -81,10 +84,11 @@ export function formatCopySellMessage(trade: ClosedTrade): string {
   return [
     "⚡ <b>VENDITA IMMEDIATA ESEGUITA (COPY SELL)</b>",
     `• Token: $${trade.position.symbol} (Solana)`,
+    `• Target Fomo: ${escapeHtml(wallet)}`,
     `• Entry Price: ${fmtUsd(entry, 6)}`,
-    `• Prezzo di Uscita (Sell Price): ${fmtUsd(exit, 6)}`,
+    `• Sell Price: ${fmtUsd(exit, 6)}`,
     `• Variazione prezzo: <b>${movePct >= 0 ? "+" : ""}${movePct.toFixed(2)}%</b>`,
-    `• Motivo Uscita: 🚨 Rilevata vendita istantanea dal Wallet Copiato (${escapeHtml(wallet)}) — Nessuna attesa.`,
+    `• Motivo: 🚨 Vendita del target Fomo — mirror immediato`,
     `${sign} Profit/Loss Netto: <b>${fmtSol(trade.pnlSol)}</b> (${trade.pnlUsd >= 0 ? "+" : "-"}${fmtUsd(Math.abs(trade.pnlUsd))}) [<b>${trade.pnlPct >= 0 ? "+" : ""}${trade.pnlPct.toFixed(2)}%</b>]`,
     trade.copyLatencyNote ? `• ${escapeHtml(trade.copyLatencyNote)}` : "",
   ]
@@ -94,10 +98,9 @@ export function formatCopySellMessage(trade: ClosedTrade): string {
 
 export function formatRejectMessage(decision: DecisionResult): string {
   return [
-    "🛡 <b>Trade Rifiutato - Filtri Risk/Strategy</b>",
+    "🛡 <b>Trade Rifiutato</b>",
     `• Token: $${decision.candidate.symbol}`,
     `• Market Cap: ${fmtUsd(decision.candidate.marketCapUsd, 0)}`,
-    `• Rischio stimato: ${decision.assessment.risk.riskPct}% (${decision.assessment.risk.bandLabel})`,
     `• Motivo: ${escapeHtml(decision.motivation)}`,
   ].join("\n");
 }
@@ -110,9 +113,7 @@ export function formatSystemAlert(alert: SystemAlert): string {
     `• ${escapeHtml(alert.message)}`,
   ];
   if (alert.requiresUpdate) {
-    lines.push(
-      '• Modifica rischio max: <code>/risk max 70</code> · tolleranza: <code>/risk only_high</code> · oppure <code>/update &lt;istruzione&gt;</code>.',
-    );
+    lines.push("• Usa /start → ⚙️ Settings oppure /update &lt;istruzione&gt;.");
   }
   return lines.join("\n");
 }
@@ -129,22 +130,15 @@ export function formatStatus(params: {
   avgRisk: number;
 }): string {
   return [
-    "🤖 <b>STATUS BOT (Max Profit H24)</b>",
+    "🤖 <b>STATUS BOT</b>",
     `• Stato: ${params.status}`,
     `• Mode: ${params.mode}`,
-    `• Budget: ${params.budget.toFixed(4)} SOL`,
-    `• Residuo: ${params.residual.toFixed(4)} SOL`,
+    `• Budget residuo: ${params.residual.toFixed(4)} SOL`,
     `• PnL realizzato: ${fmtSol(params.pnl)}`,
     `• Posizioni aperte: ${params.open}`,
-    `• Tolleranza rischio: ${params.riskTolerance}`,
-    `• Max risk %: ${params.maxRiskPct}%`,
-    `• Rischio medio open: ${params.avgRisk.toFixed(1)}%`,
   ].join("\n");
 }
 
 function escapeHtml(s: string): string {
-  return s
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+  return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }

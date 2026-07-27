@@ -22,6 +22,24 @@ export class WalletRegistry {
     return this.wallets.has(address);
   }
 
+  findByUsername(username: string): TrackedWallet | undefined {
+    const key = username.replace(/^@/, "").toLowerCase();
+    return this.list().find((w) => w.username?.toLowerCase() === key);
+  }
+
+  /** Abilita solo wallet il cui username è nella lista target Fomo */
+  enableOnlyUsernames(usernames: string[]): void {
+    const set = new Set(usernames.map((u) => u.replace(/^@/, "").toLowerCase()));
+    for (const w of this.wallets.values()) {
+      if (!w.username) {
+        // seed/manual senza username restano come erano se lista vuota
+        if (set.size > 0 && w.source !== "manual") w.enabled = false;
+        continue;
+      }
+      w.enabled = set.has(w.username.toLowerCase());
+    }
+  }
+
   upsertMany(rows: TrackedWallet[], opts?: { preserveManual?: boolean }): void {
     for (const row of rows) {
       const prev = this.wallets.get(row.address);

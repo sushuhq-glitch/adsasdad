@@ -88,13 +88,13 @@ export function parseTelegramCommand(text: string): TelegramCommand {
 }
 
 export const HELP_TEXT = [
-  "📟 <b>Mirror Trading / FOMO Top PnL</b>",
-  "/start o /dashboard — pannello",
-  "/wallets list — top wallet tracciati",
+  "📟 <b>FOMO Mirror Copy Trading</b>",
+  "/start — onboarding (API Key + budget fisso) / menu",
+  "/setup — rifai setup",
+  "/menu — posizioni live · win/loss · settings",
+  "/wallets list — target Fomo tracciati",
   "/wallets add &lt;address&gt; [label]",
-  "/wallets remove &lt;address&gt;",
-  "/wallets refresh — ricarica Top 50 FOMO PnL",
-  "/pause · /resume · /budget &lt;SOL&gt;",
-  "/risk only_high | all · /risk max 70",
+  "/wallets refresh — ricarica leaderboard Fomo",
+  "/pause · /resume · /budget &lt;SOL&gt; (portfolio)",
   "/help",
 ].join("\n");

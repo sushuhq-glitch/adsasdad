@@ -3,6 +3,8 @@ export type MirrorSide = "buy" | "sell";
 export interface TrackedWallet {
   address: string;
   label: string;
+  /** Username Fomo (senza @), es. PoorGoat_ */
+  username?: string;
   rank?: number;
   realizedPnlUsd?: number;
   winRatePct?: number;

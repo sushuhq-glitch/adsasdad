@@ -2,11 +2,21 @@ import type { OrderRequest, OrderResult } from "../types/index.js";
 import type { ExecutionAdapter } from "./types.js";
 import { uid } from "../lib/money.js";
 
-/** Simulatore locale: nessun ordine on-chain. */
+/**
+ * Paper adapter: fill al mark price live.
+ * Nessuna fee fittizia sul prezzo — PnL % = variazione di mercato reale.
+ */
 export class PaperExecutionAdapter implements ExecutionAdapter {
   readonly venue = "paper" as const;
+  private solUsdEstimate: number;
 
-  constructor(private readonly solUsdEstimate = 150) {}
+  constructor(solUsdEstimate = 150) {
+    this.solUsdEstimate = solUsdEstimate;
+  }
+
+  setSolUsd(n: number): void {
+    if (n > 0) this.solUsdEstimate = n;
+  }
 
   async healthCheck() {
     return { ok: true, message: "Paper adapter OK" };
@@ -25,11 +35,10 @@ export class PaperExecutionAdapter implements ExecutionAdapter {
       };
     }
 
-    const slip = req.slippageBps / 10_000;
+    // Fill esatto al mark: niente slip artificiale sul prezzo
+    const fillPrice = tokenPriceUsd;
 
     if (req.side === "buy") {
-      // Entry leggermente peggiore dello spot (slippage)
-      const fillPrice = tokenPriceUsd * (1 + slip / 2);
       const amountSol = req.amountSol ?? 0;
       const notionalUsd = amountSol * this.solUsdEstimate;
       const tokenAmount = fillPrice > 0 ? notionalUsd / fillPrice : 0;
@@ -44,11 +53,8 @@ export class PaperExecutionAdapter implements ExecutionAdapter {
       };
     }
 
-    // SELL: il filledPriceUsd è il mark di mercato (per PnL % reale).
-    // Lo slippage riduce solo il notional SOL recuperato (fee di esecuzione).
-    const fillPrice = tokenPriceUsd;
     const tokenAmount = req.tokenAmount ?? 0;
-    const notionalUsd = fillPrice * tokenAmount * (1 - slip / 2);
+    const notionalUsd = fillPrice * tokenAmount;
     const amountSol = notionalUsd / this.solUsdEstimate;
     return {
       ok: true,

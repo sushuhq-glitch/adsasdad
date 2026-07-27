@@ -23,6 +23,7 @@ import { WalletManager } from "./trader/wallet-manager.js";
 import type {
   BotRuntimeState,
   DecisionResult,
+  Position,
   RejectedTrade,
   RiskTolerance,
 } from "./types/index.js";
@@ -95,6 +96,9 @@ export class BotController {
     this.engine.setRiskTolerance(this.state.riskTolerance);
     this.engine.setMaxRiskPct(this.state.maxRiskPct);
 
+    const userSettings = await this.telegram.loadSettings();
+    this.applyUserSettings(userSettings);
+
     await this.registry.load();
     this.syncTrackedView();
 
@@ -127,7 +131,67 @@ export class BotController {
       stateProvider: () => this.getState(),
       modeLabel: () =>
         `COPY/FOMO ${this.state.tradingMode}${this.config.DRY_RUN ? " dry-run" : ""}${this.state.tradingMode === "paper" ? " 🧪" : ""}`,
+      livePositionsProvider: () => this.getLivePositionRows(),
+      onSettingsChanged: async (settings) => {
+        this.applyUserSettings(settings);
+        this.demoFeed?.setTargetUsernames(settings.fomoUsernames);
+        this.demoFeed?.ensureDemoWallets();
+        this.registry.enableOnlyUsernames(settings.fomoUsernames);
+        await this.watcher?.resubscribeAll();
+        this.mirror?.reindex();
+        await this.persist();
+      },
     });
+  }
+
+  /** Applica budget fisso / API key / target usernames dalle settings Telegram */
+  applyUserSettings(settings: { fixedTradeSol: number; fomoApiKey: string; fomoUsernames: string[]; solUsd: number }): void {
+    this.config.COPY_TRADE_SOL = settings.fixedTradeSol;
+    if (settings.fomoApiKey) {
+      this.config.FOMO_API_KEY = settings.fomoApiKey;
+      process.env.FOMO_API_KEY = settings.fomoApiKey;
+    }
+    this.registry.enableOnlyUsernames(settings.fomoUsernames);
+    this.demoFeed?.setTargetUsernames(settings.fomoUsernames);
+    logger.info(
+      {
+        tradeSol: settings.fixedTradeSol,
+        targets: settings.fomoUsernames,
+        hasApiKey: Boolean(settings.fomoApiKey),
+      },
+      "User settings applicate al controller",
+    );
+  }
+
+  async getLivePositionRows(): Promise<
+    Array<{
+      position: Position;
+      livePriceUsd: number;
+      liveMarketCapUsd: number;
+      pnlPct: number;
+      pnlSol: number;
+    }>
+  > {
+    const rows = [];
+    for (const position of this.state.openPositions) {
+      const quote = await this.positions.getOracle().getLivePriceUsd(position.mint, {
+        bypassCache: true,
+      });
+      const livePriceUsd = quote.priceUsd > 0 ? quote.priceUsd : position.entryPriceUsd;
+      const liveMarketCapUsd =
+        quote.marketCapUsd && quote.marketCapUsd > 0
+          ? quote.marketCapUsd
+          : position.marketCapAtEntry > 0 && position.entryPriceUsd > 0
+            ? position.marketCapAtEntry * (livePriceUsd / position.entryPriceUsd)
+            : 0;
+      const pnlPct =
+        position.entryPriceUsd > 0
+          ? ((livePriceUsd - position.entryPriceUsd) / position.entryPriceUsd) * 100
+          : 0;
+      const pnlSol = position.amountSol * (pnlPct / 100);
+      rows.push({ position, livePriceUsd, liveMarketCapUsd, pnlPct, pnlSol });
+    }
+    return rows;
   }
 
   async start(): Promise<void> {
@@ -149,7 +213,10 @@ export class BotController {
       };
       this.watcher = new SolanaWalletWatcher(this.config, this.registry);
       await this.watcher.start(onSignal);
+      const settings = this.telegram.getSettings();
       this.demoFeed = new FomoDemoFeed(this.config, this.registry);
+      this.demoFeed.setTargetUsernames(settings.fomoUsernames);
+      this.demoFeed.ensureDemoWallets();
       this.demoFeed.start(onSignal);
       this.syncTrackedView();
       await this.persist();
@@ -261,7 +328,7 @@ export class BotController {
   private syncTrackedView(): void {
     this.state.trackedWallets = this.registry.list().map((w) => ({
       address: w.address,
-      label: w.label,
+      label: w.username ? `@${w.username}` : w.label,
       rank: w.rank,
       realizedPnlUsd: w.realizedPnlUsd,
       reliabilityScore: w.reliabilityScore,
@@ -280,30 +347,49 @@ export class BotController {
 
   private async refreshLeaderboard(): Promise<void> {
     try {
+      const settings = this.telegram.getSettings();
+      const targets = new Set(settings.fomoUsernames.map((u) => u.replace(/^@/, "").toLowerCase()));
       const top = await this.fomo.fetchTop50();
-      if (!top.length) {
-        const hasReal = this.registry.list().some((w) => !w.label.includes("(DEMO)"));
+
+      if (top.length) {
+        // Preferisci match per username target; resta il resto disabilitato
+        const matched = top.filter(
+          (w) => w.username && targets.has(w.username.replace(/^@/, "").toLowerCase()),
+        );
+        if (matched.length) {
+          this.registry.upsertMany(matched, { preserveManual: true });
+        } else {
+          this.registry.upsertMany(top.slice(0, this.config.COPY_MAX_WALLETS), {
+            preserveManual: true,
+          });
+        }
+      } else {
         await this.alerts.push({
           severity: "warning",
           title: "FOMO Top PnL API non disponibile",
-          message: hasReal
-            ? "Uso wallet già in lista. Puoi aggiungere altri con /wallets add <address>."
-            : "API FOMO non pubblica da questo ambiente. In paper attivo feed DEMO, oppure /wallets add <address> / FOMO_API_KEY.",
+          message:
+            "Uso target username in DEMO/paper. Configura FOMO API Key da /start → Settings.",
           requiresUpdate: false,
           source: "fomo",
         });
         if (this.state.status === "awaiting_update") this.state.status = "running";
-        if (!this.registry.list().length) {
-          this.registry.upsertMany(await this.fomo.fetchTop50());
-        }
-      } else {
-        this.registry.upsertMany(top, { preserveManual: true });
+        this.demoFeed?.setTargetUsernames(settings.fomoUsernames);
+        this.demoFeed?.ensureDemoWallets();
       }
+
+      this.registry.enableOnlyUsernames(settings.fomoUsernames);
       this.syncTrackedView();
       await this.registry.save();
       await this.watcher?.resubscribeAll();
       this.mirror?.reindex();
-      logger.info({ wallets: this.registry.list(true).length }, "Leaderboard FOMO sincronizzata");
+      logger.info(
+        {
+          wallets: this.registry.list(true).length,
+          targets: settings.fomoUsernames,
+          tradeSol: this.config.COPY_TRADE_SOL,
+        },
+        "Leaderboard FOMO / target usernames sincronizzata",
+      );
       await this.persist();
     } catch (err) {
       logger.error({ err }, "refreshLeaderboard fallita");

@@ -87,12 +87,15 @@ export class FomoLeaderboardClient {
       if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) continue;
       const pnl = Number(row.realizedPnlUsd ?? row.pnlUsd ?? row.pnl ?? row.realized ?? 0);
       const win = Number(row.winRatePct ?? row.win_percentage ?? row.winRate ?? 50);
-      const label =
-        String(row.label ?? row.name ?? row.username ?? row.handle ?? `Top PnL #${rank}`) ||
-        `Top PnL #${rank}`;
+      const usernameRaw = String(row.username ?? row.handle ?? row.name ?? row.label ?? "");
+      const username = usernameRaw.replace(/^@/, "").trim() || undefined;
+      const label = username
+        ? `@${username}`
+        : String(row.label ?? row.name ?? `Top PnL #${rank}`) || `Top PnL #${rank}`;
       out.push({
         address,
-        label: source === "fomo" ? `${label} (FOMO)` : label,
+        label: source === "fomo" && !username ? `${label} (FOMO)` : label,
+        username,
         rank,
         realizedPnlUsd: Number.isFinite(pnl) ? pnl : undefined,
         winRatePct: Number.isFinite(win) ? win : undefined,

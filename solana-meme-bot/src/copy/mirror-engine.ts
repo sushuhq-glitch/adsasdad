@@ -75,15 +75,13 @@ export class MirrorEngine {
       return;
     }
 
-    // Size: frazione del budget, ridotta se rischio alto
-    const scale = Math.max(0.25, 1 - risk.riskPct / 130);
-    const amountSol = Math.min(
-      this.config.MAX_POSITION_SOL * scale,
-      this.state.residualBudgetSol,
-      this.config.COPY_TRADE_SOL,
-    );
-    if (amountSol < 0.01) {
-      await this.cbs.onSkip("Budget insufficiente", signal);
+    // Budget fisso utente — MAI l'amount del target Fomo
+    const amountSol = this.config.COPY_TRADE_SOL;
+    if (!(amountSol > 0) || this.state.residualBudgetSol + 1e-9 < amountSol) {
+      await this.cbs.onSkip(
+        `Budget insufficiente per trade fisso ${amountSol} SOL (residuo ${this.state.residualBudgetSol.toFixed(4)})`,
+        signal,
+      );
       return;
     }
 
@@ -94,6 +92,12 @@ export class MirrorEngine {
       await this.cbs.onSkip("Prezzo live non disponibile per COPY BUY", signal);
       return;
     }
+    const liveMcap =
+      live.marketCapUsd && live.marketCapUsd > 0
+        ? live.marketCapUsd
+        : token?.marketCapUsd && token.marketCapUsd > 0
+          ? token.marketCapUsd
+          : 0;
     const slip = token ? this.positions.dynamicSlippageBps(token) : this.config.DEFAULT_SLIPPAGE_BPS;
     const t0 = Date.now();
     const order = await this.router.buy(signal.mint, amountSol, price, slip);
@@ -102,22 +106,27 @@ export class MirrorEngine {
       return;
     }
 
-    const candidate: TokenCandidate = token ?? {
+    const candidate: TokenCandidate = {
       mint: signal.mint,
-      symbol: signal.mint.slice(0, 4).toUpperCase(),
-      name: "Unknown",
-      marketCapUsd: 0,
-      liquidityUsd: 0,
+      symbol: token?.symbol ?? signal.mint.slice(0, 4).toUpperCase(),
+      name: token?.name ?? "Unknown",
+      marketCapUsd: liveMcap || token?.marketCapUsd || 0,
+      liquidityUsd: token?.liquidityUsd ?? 0,
       priceUsd: price,
-      volume24hUsd: 0,
-      ageMinutes: 0,
+      volume24hUsd: token?.volume24hUsd ?? 0,
+      ageMinutes: token?.ageMinutes ?? 0,
       source: "copy",
+      raw: token?.raw,
     };
 
-    const motivation = `COPY BUY da ${signal.wallet.label} · sig ${signal.signature.slice(0, 8)}…`;
+    const targetTag = signal.wallet.username
+      ? `@${signal.wallet.username}`
+      : signal.wallet.label;
+    const motivation = `COPY BUY da ${targetTag} · budget fisso ${amountSol} SOL · sig ${signal.signature.slice(0, 8)}…`;
     const position = this.positions.openFromFill(
       candidate,
-      order.filledAmountSol || amountSol,
+      // Forza esattamente il budget fisso (paper/live fill amount)
+      amountSol,
       order.filledPriceUsd || price,
       order.filledTokenAmount,
       order.venue,
@@ -129,7 +138,7 @@ export class MirrorEngine {
       },
     );
     position.copyFromAddress = signal.wallet.address;
-    position.copyFromLabel = signal.wallet.label;
+    position.copyFromLabel = targetTag;
     position.copySourceSignature = signal.signature;
     position.listeningForCopySell = true;
     // Emergency TP/SL only — copy sell ha priorità
