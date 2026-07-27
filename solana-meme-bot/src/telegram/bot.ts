@@ -250,10 +250,26 @@ export class TelegramService {
       const lower = raw.toLowerCase();
       const isDemo = lower === "demo" || lower === "skip" || lower === "-";
       if (!isDemo && !raw) {
-        await this.send(chatId, "API Key obbligatoria (oppure invia <code>demo</code> per paper).");
+        await this.send(
+          chatId,
+          "Token obbligatorio. In Console: <code>copy(JSON.parse(localStorage.getItem('privy:token')))</code> oppure <code>demo</code>.",
+        );
         return;
       }
-      const key = isDemo ? "" : raw;
+      // Strip quotes / Bearer prefix from Privy JWT pasted from localStorage
+      const key = isDemo
+        ? ""
+        : raw
+            .replace(/^Bearer\s+/i, "")
+            .replace(/^["']|["']$/g, "")
+            .trim();
+      if (!isDemo && key.length < 20) {
+        await this.send(
+          chatId,
+          "Token troppo corto. Devi copiare <code>privy:token</code> (inizia con <code>eyJ...</code>).",
+        );
+        return;
+      }
       const settings = await this.settingsStore.save({
         fomoApiKey: key,
         fomoAuthenticated: Boolean(key),
@@ -267,7 +283,7 @@ export class TelegramService {
         await this.onSettingsChanged?.(settings);
         await this.sendMenu(
           chatId,
-          key ? "✅ FOMO API Key aggiornata." : "✅ Modalità demo/paper senza API Key.",
+          key ? "✅ Sessione Fomo (<code>privy:token</code>) aggiornata." : "✅ Modalità demo/paper.",
           settingsKeyboard(),
         );
       }
@@ -373,10 +389,11 @@ export class TelegramService {
         await this.send(
           chatId,
           [
-            "🔑 Invia il nuovo <b>token di sessione Fomo</b>.",
+            "🔑 Incolla il nuovo <b>privy:token</b>.",
             "",
-            "Da <a href=\"https://fomo.family\">fomo.family</a> → F12 → Application → Local Storage → cerca <code>token</code> / <code>auth_token</code> / <code>jwt</code> / <code>session</code>.",
-            "Oppure <code>demo</code> per paper.",
+            "In Console Fomo:",
+            "<code>copy(JSON.parse(localStorage.getItem('privy:token')))</code>",
+            "Poi Ctrl+V qui. Oppure <code>demo</code>.",
           ].join("\n"),
         );
         return;

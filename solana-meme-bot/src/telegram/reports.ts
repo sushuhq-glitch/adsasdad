@@ -22,30 +22,28 @@ export function formatOnboardingWelcome(settings: UserBotSettings): string {
   return [
     "👋 <b>Benvenuto su WEDOTHAT — FOMO Copy Trading</b>",
     "",
-    "Configuriamo il bot in 2 step <b>obbligatori</b> prima di qualsiasi operazione:",
-    "1️⃣ <b>Token di sessione Fomo</b> (da browser)",
-    "2️⃣ <b>Budget fisso per trade</b> (SOL) — usato SEMPRE, non l'amount del target",
+    "Configuriamo il bot in 2 step <b>obbligatori</b>:",
+    "1️⃣ <b>Token sessione Fomo</b> (= chiave <code>privy:token</code> dal browser)",
+    "2️⃣ <b>Budget fisso per trade</b> (SOL)",
     "",
     settings.onboarded
       ? `Stato attuale: budget <b>${settings.fixedTradeSol} SOL</b>/trade · target ${settings.fomoUsernames.map(formatUsername).join(", ")}`
       : "Sessione non attiva — setup richiesto.",
     "",
-    "<b>Come prendere il token Fomo</b>",
-    "1. Apri <a href=\"https://fomo.family\">fomo.family</a> e accedi",
-    "2. Premi <b>F12</b> (o tasto destro → Ispeziona)",
-    "3. Scheda <b>Application</b> / Storage",
-    "4. Local Storage → URL di Fomo",
-    "5. Cerca <code>token</code> / <code>auth_token</code> / <code>jwt</code> / <code>session</code>",
-    "6. Copia il valore e <b>incollalo qui</b>",
+    "🔐 <b>Come copiare privy:token</b> (sei già loggato con Google su Fomo):",
+    "1. Su <a href=\"https://fomo.family\">fomo.family</a> premi <b>F12</b> → scheda <b>Console</b>",
+    "2. Incolla questo comando e premi Invio:",
+    "<code>copy(JSON.parse(localStorage.getItem('privy:token')))</code>",
+    "3. Il token è negli appunti → <b>incollalo qui</b> su Telegram",
     "",
-    "⚠️ Non condividere il token con nessuno (è come una password).",
-    "Oppure invia <code>demo</code> per continuare solo in paper.",
+    "⚠️ Non condividere il token (né password Google). Non chiederemo mai email/password.",
+    "Oppure invia <code>demo</code> per paper senza sessione.",
   ].join("\n");
 }
 
 export function formatAskBudget(): string {
   return [
-    "✅ Credenziali Fomo salvate.",
+    "✅ Sessione Fomo collegata (<code>privy:token</code>).",
     "",
     "Ora invia il <b>budget fisso per ogni operazione</b> in SOL.",
     "Esempi: <code>0.15</code> · <code>0.25</code> · <code>1</code>",
