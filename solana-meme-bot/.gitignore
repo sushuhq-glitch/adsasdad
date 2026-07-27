@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+data/runtime-state.json
+data/telegram-chat.json
+data/tracked-wallets.json
+data/user-settings.json
+data/*.tmp
+*.log
+.DS_Store
+coverage/
