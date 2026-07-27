@@ -3,6 +3,7 @@ import type { Server } from "node:http";
 import { MaxProfitEngine } from "./analysis/max-profit-engine.js";
 import type { AppConfig } from "./config/schema.js";
 import { loadConfig } from "./config/schema.js";
+import { FomoAccountClient } from "./copy/fomo-account.js";
 import { FomoDemoFeed } from "./copy/fomo-demo-feed.js";
 import { FomoLeaderboardClient } from "./copy/fomo-leaderboard.js";
 import { MirrorEngine } from "./copy/mirror-engine.js";
@@ -49,6 +50,7 @@ export class BotController {
   readonly positions: PositionManager;
   readonly registry = new WalletRegistry();
   private readonly fomo: FomoLeaderboardClient;
+  private readonly fomoAccount = new FomoAccountClient();
   private watcher: SolanaWalletWatcher | null = null;
   private demoFeed: FomoDemoFeed | null = null;
   private mirror: MirrorEngine | null = null;
@@ -326,13 +328,33 @@ export class BotController {
     const settings = this.telegram.getSettings();
     const solUsd = settings.solUsd || 150;
     const openPositionsSol = this.state.openPositions.reduce((a, p) => a + p.amountSol, 0);
-    const addr = settings.solanaAddress || this.wallet.getPublicKey() || null;
+
+    let fomoSnap = null as Awaited<ReturnType<FomoAccountClient["fetchSnapshot"]>> | null;
+    if (settings.fomoApiKey) {
+      fomoSnap = await this.fomoAccount.fetchSnapshot(settings.fomoApiKey);
+      if (fomoSnap.ok && fomoSnap.solanaAddress && !settings.solanaAddress) {
+        await this.telegram.settingsStore.save({ solanaAddress: fomoSnap.solanaAddress });
+      }
+    } else {
+      fomoSnap = {
+        ok: false,
+        error: "Nessun privy:token — /start e incolla privy:token",
+      };
+    }
+
+    const refreshed = this.telegram.getSettings();
+    const addr =
+      refreshed.solanaAddress ||
+      fomoSnap?.solanaAddress ||
+      this.wallet.getPublicKey() ||
+      null;
     let onChainSol: number | null = null;
     if (addr) {
       onChainSol = await this.wallet.getSolBalanceForAddress(addr);
     } else {
       onChainSol = await this.wallet.getSolBalance();
     }
+
     const mode = `${this.state.tradingMode}${this.config.DRY_RUN ? " dry-run" : ""}`;
     return formatBalanceReport({
       mode,
@@ -346,6 +368,7 @@ export class BotController {
       solUsd,
       onChainSol,
       walletAddress: addr,
+      fomo: fomoSnap,
     });
   }
 

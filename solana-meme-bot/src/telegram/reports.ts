@@ -127,13 +127,58 @@ export function formatBalanceReport(params: {
   solUsd: number;
   onChainSol: number | null;
   walletAddress: string | null;
+  fomo?: {
+    ok: boolean;
+    handle?: string;
+    cashUsd?: number;
+    portfolioUsd?: number;
+    positionsUsd?: number;
+    positionsCount?: number;
+    solanaAddress?: string;
+    error?: string;
+  } | null;
 }): string {
   const equity = params.residualSol + params.openPositionsSol + params.unrealizedPnlSol;
-  const lines = [
-    "💰 <b>BALANCE / PORTAFOGLIO</b>",
-    `• Mode: <b>${escapeHtml(params.mode)}</b>`,
+  const lines: string[] = ["💰 <b>BALANCE</b>", `• Mode: <b>${escapeHtml(params.mode)}</b>`, ""];
+
+  // FOMO account first — what the user asked for
+  lines.push("🟣 <b>Account FOMO</b>");
+  if (params.fomo?.ok) {
+    if (params.fomo.handle) lines.push(`• Handle: <b>@${escapeHtml(params.fomo.handle)}</b>`);
+    if (params.fomo.cashUsd != null) {
+      lines.push(`• Cash disponibile: <b>${fmtUsd(params.fomo.cashUsd)}</b>`);
+    }
+    if (params.fomo.positionsUsd != null) {
+      lines.push(
+        `• Posizioni token: <b>${fmtUsd(params.fomo.positionsUsd)}</b>${
+          params.fomo.positionsCount != null ? ` (${params.fomo.positionsCount})` : ""
+        }`,
+      );
+    }
+    if (params.fomo.portfolioUsd != null) {
+      lines.push(`• Portfolio totale: <b>${fmtUsd(params.fomo.portfolioUsd)}</b>`);
+    }
+    if (
+      params.fomo.cashUsd == null &&
+      params.fomo.portfolioUsd == null &&
+      params.fomo.positionsUsd == null
+    ) {
+      lines.push("• Profilo OK, ma FOMO non ha esposto i campi cash in questo payload.");
+    }
+    if (params.fomo.solanaAddress) {
+      const a = params.fomo.solanaAddress;
+      lines.push(`• Wallet FOMO Solana: <code>${escapeHtml(a.slice(0, 4))}…${escapeHtml(a.slice(-4))}</code>`);
+    }
+  } else {
+    lines.push(
+      `• ${escapeHtml(params.fomo?.error || "Sessione FOMO non disponibile")}`,
+      "• Aggiorna <code>privy:token</code> da /start se scaduto.",
+    );
+  }
+
+  lines.push(
     "",
-    "<b>Paper / Bot</b>",
+    "<b>Bot paper (copy)</b>",
     `• Budget totale: <b>${params.budgetSol.toFixed(4)} SOL</b> (~${fmtUsd(params.budgetSol * params.solUsd)})`,
     `• Disponibile (cash): <b>${params.residualSol.toFixed(4)} SOL</b>`,
     `• In posizioni aperte: <b>${params.openPositionsSol.toFixed(4)} SOL</b> (${params.openCount} token)`,
@@ -143,23 +188,23 @@ export function formatBalanceReport(params: {
     `• PnL sessione: <b>${fmtSol(params.sessionPnlSol)}</b>`,
     "",
     "<b>On-chain Solana</b>",
-  ];
-  if (params.walletAddress && params.onChainSol != null) {
-    const short = `${params.walletAddress.slice(0, 4)}…${params.walletAddress.slice(-4)}`;
+  );
+
+  const addr = params.walletAddress || params.fomo?.solanaAddress || null;
+  if (addr && params.onChainSol != null) {
     lines.push(
-      `• Wallet: <code>${escapeHtml(short)}</code>`,
+      `• Wallet: <code>${escapeHtml(addr.slice(0, 4))}…${escapeHtml(addr.slice(-4))}</code>`,
       `• Balance live: <b>${params.onChainSol.toFixed(4)} SOL</b> (~${fmtUsd(params.onChainSol * params.solUsd)})`,
     );
-  } else if (params.walletAddress) {
+  } else if (addr) {
     lines.push(
-      `• Wallet: <code>${escapeHtml(params.walletAddress.slice(0, 4))}…${escapeHtml(params.walletAddress.slice(-4))}</code>`,
+      `• Wallet: <code>${escapeHtml(addr.slice(0, 4))}…${escapeHtml(addr.slice(-4))}</code>`,
       "• Balance live: non leggibile (RPC error)",
     );
   } else {
     lines.push(
       "• Nessun wallet collegato.",
-      "• Impostalo da ⚙️ Settings → <b>Imposta wallet Solana</b>",
-      "  (indirizzo pubblico, es. quello su Fomo → profilo)",
+      "• ⚙️ Settings → <b>Imposta wallet Solana</b> (address pubblico Fomo).",
     );
   }
   return lines.join("\n");
